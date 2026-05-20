@@ -1,4 +1,6 @@
 import requests
+from context_manager import trim_context
+from response_parser import parse_response
 
 SYSTEM_PROMPT = """ 
     Your Name is SEVEN.
@@ -16,27 +18,6 @@ messages = [
 ]
 
 
-def trim_context():
-
-    # Keep system prompt safe
-    system_message = messages[0]
-
-    # Conversation messages only
-    conversation = messages[1:]
-
-    # If limit exceeded
-    if len(conversation) > 15:
-
-        # Drop oldest 10 messages
-        conversation = conversation[10:]
-
-        # Rebuild messages list
-        messages.clear()
-
-        messages.append(system_message)
-
-        messages.extend(conversation)
-
 def ask_llm(query):
 
 
@@ -47,7 +28,7 @@ def ask_llm(query):
     })
 
     # Trim context if needed
-    trim_context()
+    trim_context(messages)
 
 
     response = requests.post(
@@ -77,10 +58,10 @@ def ask_llm(query):
     })
 
     # Trim again after assistant response
-    trim_context()
+    trim_context(messages)
 
 
-    return assistant_reply
+    return parse_response(assistant_reply)
 
 if __name__ == "__main__":
     while True:
