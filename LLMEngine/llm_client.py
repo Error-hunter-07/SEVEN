@@ -1,6 +1,6 @@
 import requests
-from context_manager import trim_context
-from response_parser import parse_response
+from MemoryManagement.shortterm_memory.conversation_history import trim_context
+from .response_parser import parse_response
 
 SYSTEM_PROMPT = """ 
     Your Name is SEVEN.
@@ -30,38 +30,39 @@ def ask_llm(query):
     # Trim context if needed
     trim_context(messages)
 
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/chat",
+            json={
+                "model": "gemma4:e4b",
+                "messages": messages,
+                "stream": False
+            },
+        
+        )
+        response.raise_for_status()
+        data = response.json()
+        assistant_reply = data["message"]["content"]
+        messages.append({
+            "role": "assistant",
+            "content": assistant_reply
+        })
+        return parse_response(assistant_reply)  
+    except ConnectionError:
+        print("[ERROR] Could not connect to local LLM.")
+    
+    except TimeoutError:
+        print("[ERROR] Model took too long to respond.")
 
-    response = requests.post(
-        "http://localhost:11434/api/chat",
-        json={
-            "model": "gemma4:e4b",
-            "messages": [
-                {
-                    "role":"system",
-                    "content": SYSTEM_PROMPT
-              },
-                {
-                    "role": "user",
-                    "content": query
-                }
-            ],
-            "stream": False
-        }
-    )
-    data = response.json()
-    assistant_reply = data["message"]["content"]
+    except Exception as e:
+        print(f"[ERROR] Unexpected error: {e}")
 
     # Add assistant response
-    messages.append({
-        "role": "assistant",
-        "content": assistant_reply
-    })
 
     # Trim again after assistant response
     trim_context(messages)
 
 
-    return parse_response(assistant_reply)
 
 if __name__ == "__main__":
     while True:
