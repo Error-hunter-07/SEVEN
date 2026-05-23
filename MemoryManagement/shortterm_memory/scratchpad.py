@@ -1,3 +1,4 @@
+from .summarizer import compiled_scratchpad_memory
 class Scratchpad:
     def __init__(self):
         self.seven_notes = ""
@@ -61,4 +62,17 @@ class Scratchpad:
     def get_response_drafts(self):
         return self.response_drafts
     
-    
+
+
+scratchpad = Scratchpad()
+
+scratchpad_memory = compiled_scratchpad_memory(
+    seven_notes=scratchpad.get_seven_notes(),
+    conversation_summary=scratchpad.get_conversation_summary(),
+    current_goal=scratchpad.get_current_goal(),
+    subtasks=scratchpad.get_subtasks(),
+    retrieved_context=scratchpad.get_retrieved_context(),
+    tool_outputs=scratchpad.get_tool_outputs(),
+    memory_updates=scratchpad.get_memory_updates(),
+    response_drafts=scratchpad.get_response_drafts()
+)
