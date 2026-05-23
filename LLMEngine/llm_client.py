@@ -5,6 +5,8 @@ import os
 from dotenv import load_dotenv
 import PrompBuilder.prompt_builder as prompt_builder
 
+import ToolCalling.executor as tool_executor
+
 messages = []
 
 load_dotenv()  # Load environment variables from .env file
@@ -47,7 +49,9 @@ def ask_llm(query):
             "role": "assistant",
             "content": assistant_reply
         })
+        tool_executor.execute_tool_calls(assistant_reply)
         return parse_response(assistant_reply)  
+    
     except ConnectionError:
         print("[ERROR] Could not connect to local LLM.")
     
