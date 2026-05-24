@@ -66,13 +66,14 @@ class Scratchpad:
 
 scratchpad = Scratchpad()
 
-scratchpad_memory = compiled_scratchpad_memory(
-    seven_notes=scratchpad.get_seven_notes(),
-    conversation_summary=scratchpad.get_conversation_summary(),
-    current_goal=scratchpad.get_current_goal(),
-    subtasks=scratchpad.get_subtasks(),
-    retrieved_context=scratchpad.get_retrieved_context(),
-    tool_outputs=scratchpad.get_tool_outputs(),
-    memory_updates=scratchpad.get_memory_updates(),
-    response_drafts=scratchpad.get_response_drafts()
-)
+def get_compiled_memory():
+    return compiled_scratchpad_memory(
+        seven_notes=scratchpad.get_seven_notes(),
+        conversation_summary=scratchpad.get_conversation_summary(),
+        current_goal=scratchpad.get_current_goal(),
+        subtasks=scratchpad.get_subtasks(),
+        retrieved_context=scratchpad.get_retrieved_context(),
+        tool_outputs=scratchpad.get_tool_outputs(),
+        memory_updates=scratchpad.get_memory_updates(),
+        response_drafts=scratchpad.get_response_drafts()
+    )
