@@ -1,3 +1,4 @@
+from Tools.scratchpad_tool import get_scratchpad_memory
 import requests
 from MemoryManagement.shortterm_memory.conversation_history import trim_context
 from .response_parser import parse_response
@@ -50,13 +51,18 @@ def ask_llm(query):
             "content": assistant_reply
         })
         tool_executor.execute_tool_calls(assistant_reply)
+        print(get_scratchpad_memory())
         return parse_response(assistant_reply)  
     
-    except ConnectionError:
+    
+    except requests.exceptions.ConnectionError:
         print("[ERROR] Could not connect to local LLM.")
     
-    except TimeoutError:
+    except requests.exceptions.Timeout:
         print("[ERROR] Model took too long to respond.")
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] Request failed: {e}")
 
     except Exception as e:
         print(f"[ERROR] Unexpected error: {e}")

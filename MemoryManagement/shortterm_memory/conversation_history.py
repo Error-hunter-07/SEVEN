@@ -7,8 +7,15 @@ def trim_context(messages):
 
     global conversation_summary
 
-    system_message = messages[0]
-    conversation = messages[1:]
+    if not messages:
+        return
+
+    if messages[0].get("role") == "system":
+        system_message = messages[0]
+        conversation = messages[1:]
+    else:
+        system_message = None
+        conversation = messages
 
     if len(conversation) > 15:
 
@@ -37,6 +44,7 @@ def trim_context(messages):
 
         messages.clear()
 
-        messages.append(system_message)
+        if system_message is not None:
+            messages.append(system_message)
 
         messages.extend(conversation)

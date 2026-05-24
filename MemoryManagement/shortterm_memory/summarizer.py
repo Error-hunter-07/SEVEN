@@ -1,4 +1,8 @@
+
 import GlobalHelpers.token_counter as token_counter
+import requests
+import os
+
 
 def summarize(history_text, conversation_summary):
     if token_counter.count_tokens(history_text + conversation_summary) < 10000:
@@ -27,6 +31,7 @@ def summarize(history_text, conversation_summary):
             ],
             "stream": False
         },
+        timeout=30,
     )
     response.raise_for_status()
     data = response.json()

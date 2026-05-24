@@ -41,5 +41,6 @@ def build_prompt(user_query):
     if token_counter.count_tokens(SYSTEM_PROMPT + retrieved_context + user_query) > 125000:
         retrieved_context = ""  # Clear context if it exceeds token limit
         print("[INFO] Context cleared due to token limit.")
-        return f"{SYSTEM_PROMPT}\n\nUser: {user_query}"
-    return f"{SYSTEM_PROMPT}\n\n{retrieved_context}\n\nUser: {user_query}"
+    if retrieved_context:
+        return f"{SYSTEM_PROMPT}\n\n{retrieved_context}"
+    return SYSTEM_PROMPT
