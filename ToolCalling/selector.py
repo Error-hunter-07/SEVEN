@@ -1,0 +1,2 @@
+# Not needed right now, but will be used to select tools based on LLM response in the future
+# if the size of the tool calls grow siginificantly large then we can implement a more complex selector that uses the LLM to select which tools to call instead of calling all tools and relying on the tool functions to ignore irrelevant calls
