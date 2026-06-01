@@ -1,6 +1,6 @@
 import MemoryManagement.shortterm_memory.scratchpad as scratchpad
 import MemoryManagement.shortterm_memory.summarizer as summarizer
-import MemoryManagement.shortterm_memory.conversation_history as conversation
+# import MemoryManagement.shortterm_memory.conversation_history as conversation
 
 def get_scratchpad_memory():
     return summarizer.compiled_scratchpad_memory(
@@ -10,12 +10,11 @@ def get_scratchpad_memory():
         scratchpad.scratchpad.subtasks,
         scratchpad.scratchpad.retrieved_context,    
         scratchpad.scratchpad.tool_outputs,
-        scratchpad.scratchpad.memory_updates,
-        scratchpad.scratchpad.response_drafts
+        scratchpad.scratchpad.memory_updates
     )
 
 def update_scratchpad_summary():
-    scratchpad.scratchpad.add_conversation_summary(conversation.conversation_summary)
+    scratchpad.scratchpad.add_conversation_summary("")
 
 def update_scratchpad_seven_notes(notes):
     scratchpad.scratchpad.seven_notes = notes
@@ -34,7 +33,4 @@ def add_scratchpad_tool_output(output):
 
 def add_scratchpad_memory_update(update):
     scratchpad.scratchpad.add_memory_update(update)
-
-def add_scratchpad_response_draft(draft):
-    scratchpad.scratchpad.add_response_draft(draft)
 

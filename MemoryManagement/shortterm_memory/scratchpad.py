@@ -8,7 +8,6 @@ class Scratchpad:
         self.retrieved_context = []
         self.tool_outputs = []
         self.memory_updates = []
-        self.response_drafts = []
 
 
     def add_seven_note(self, text):
@@ -56,12 +55,6 @@ class Scratchpad:
     def get_memory_updates(self):
         return self.memory_updates
     
-    def add_response_draft(self, draft):
-        self.response_drafts.append(draft)
-
-    def get_response_drafts(self):
-        return self.response_drafts
-    
 
 
 scratchpad = Scratchpad()
@@ -74,6 +67,5 @@ def get_compiled_memory():
         subtasks=scratchpad.get_subtasks(),
         retrieved_context=scratchpad.get_retrieved_context(),
         tool_outputs=scratchpad.get_tool_outputs(),
-        memory_updates=scratchpad.get_memory_updates(),
-        response_drafts=scratchpad.get_response_drafts()
+        memory_updates=scratchpad.get_memory_updates()
     )

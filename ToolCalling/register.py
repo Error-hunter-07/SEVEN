@@ -82,12 +82,3 @@ registry.register(
         func=scratchpad_tool.add_scratchpad_memory_update
     )
 )
-
-registry.register(
-    Tool(       
-        name="add_scratchpad_response_draft",
-        description="Adds a response draft to the scratchpad.",
-        parameters={"draft": "The response draft to add."},
-        func=scratchpad_tool.add_scratchpad_response_draft
-    )
-)
