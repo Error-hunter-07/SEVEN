@@ -1,6 +1,7 @@
 import subprocess
 import time
 from typing import Optional, TextIO
+import SessionManager.session_generator as session_generator
 
 
 class ProcessManager:
@@ -11,11 +12,13 @@ class ProcessManager:
     - start / stop / restart model
     """
 
+    _instance: Optional['ProcessManager'] = None
+
     def __init__(
         self,
-        model_path: str,
-        mmproj_path: str,
-        llama_cli_path: str,
+        model_path: str = None,
+        mmproj_path: str = None,
+        llama_cli_path: str = None,
         ctx_size: int = 16384,
         gpu_layers: int = 999,
     ):
@@ -30,6 +33,10 @@ class ProcessManager:
         self.log_file: Optional[TextIO] = None
 
         self.alive = False
+        self.session_id = session_generator.generate_universal_session_id()
+        print("Session id generated as:- " + self.session_id)
+        
+        ProcessManager._instance = self
 
     # PROCESS LIFECYCLE
 
@@ -137,3 +144,13 @@ class ProcessManager:
     def stop_from_cli(self) -> None:
 
         self.stop()
+
+    def get_session_id(self):
+        return self.session_id
+
+    @staticmethod
+    def get_instance() -> 'ProcessManager':
+        """Get the singleton instance of ProcessManager."""
+        if ProcessManager._instance is None:
+            raise RuntimeError("ProcessManager not initialized. Call ProcessManager(...) first.")
+        return ProcessManager._instance

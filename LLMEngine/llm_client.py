@@ -74,7 +74,7 @@ def ask_llm(query):
         assistant_reply = request_completion(messages)
         if assistant_reply is None:
             raise KeyError("No message content in response")
-
+        print(assistant_reply)
         tool_executor.execute_tool_calls(assistant_reply)
         parsed_response = parse_response(assistant_reply)
 

@@ -1,3 +1,4 @@
+import json
 from Database import db
 
 
@@ -24,3 +25,179 @@ conn = db.DB()
 #     CONSTRAINT working_memory_pkey PRIMARY KEY (id)
 # )
 
+def insert_working_memory(session_id, memory_type, key, value, priority=0.5, relevance=0.5, expires_at=None, source=None, tags=None):
+    connection = conn.connect()
+    if connection is None:
+        print("Failed to connect to the database.")
+        return None
+
+    try:
+        with connection.cursor() as cursor:
+            insert_query = """
+                INSERT INTO public.working_memory (
+                    id,
+                    session_id,
+                    memory_type,
+                    key,
+                    value,
+                    priority,
+                    relevance,
+                    created_at,
+                    updated_at,
+                    expires_at,
+                    source,
+                    tags
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    %s, %s, %s, %s::jsonb,
+                    %s, %s,
+                    NOW(), NOW(),
+                    %s, %s, %s
+                )
+                RETURNING id;
+            """
+            cursor.execute(
+                    insert_query,
+                    (
+                        session_id,
+                        memory_type,
+                        key,
+                        json.dumps(value),
+                        priority,
+                        relevance,
+                        expires_at,
+                        source,
+                        tags
+                    )
+                )
+            new_id = cursor.fetchone()[0]
+            connection.commit()
+            return new_id
+    except Exception as e:
+        print(f"An error occurred while inserting working memory: {e}")
+        connection.rollback()
+        return None
+    finally:
+        connection.close()
+
+def get_working_memory(uuid_memory_id):
+    connection = conn.connect()
+    if connection is None:
+        print("Failed to connect to the database.")
+        return None
+
+    try:
+        with connection.cursor() as cursor:
+            select_query = """
+                SELECT id, memory_type, key, value, priority, relevance, created_at, updated_at, expires_at, source, tags
+                FROM public.working_memory
+                WHERE id = %s::uuid AND active = true
+                ORDER BY created_at DESC;
+            """
+            cursor.execute(select_query, (uuid_memory_id,))
+            results = cursor.fetchall()
+            return results
+    except Exception as e:
+        print(f"An error occurred while retrieving working memory: {e}")
+        return None
+    finally:
+        connection.close()
+
+def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None, tags=None):
+    connection = conn.connect()
+    if connection is None:
+        print("Failed to connect to the database.")
+        return False
+
+    try:
+        with connection.cursor() as cursor:
+            update_fields = []
+            update_values = []
+
+            if key is not None:
+                update_fields.append("key = %s")
+                update_values.append(key)
+            if value is not None:
+                update_fields.append("value = %s::jsonb")
+                update_values.append(json.dumps(value))
+            if priority is not None:
+                update_fields.append("priority = %s")
+                update_values.append(priority)
+            if relevance is not None:
+                update_fields.append("relevance = %s")
+                update_values.append(relevance)
+            if expires_at is not None:
+                update_fields.append("expires_at = %s")
+                update_values.append(expires_at)
+            if source is not None:
+                update_fields.append("source = %s")
+                update_values.append(source)
+            if tags is not None:
+                update_fields.append("tags = %s")
+                update_values.append(tags)
+
+            if not update_fields:
+                print("No fields to update.")
+                return False
+
+            update_query = f"""
+                UPDATE public.working_memory
+                SET {', '.join(update_fields)}, updated_at = NOW()
+                WHERE id = %s::uuid;
+            """
+            cursor.execute(update_query, (*update_values, memory_id))
+            connection.commit()
+            return True
+    except Exception as e:
+        print(f"An error occurred while updating working memory: {e}")
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+def delete_working_memory(memory_id):
+    connection = conn.connect()
+    if connection is None:
+        print("Failed to connect to the database.")
+        return False
+
+    try:
+        with connection.cursor() as cursor:
+            delete_query = """
+                UPDATE public.working_memory
+                SET active = false, updated_at = NOW()
+                WHERE id = %s::uuid;
+            """
+            cursor.execute(delete_query, (memory_id,))
+            connection.commit()
+            return True
+    except Exception as e:
+        print(f"An error occurred while deleting working memory: {e}")
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+def get_all_current_session_working_memory(session_id):
+    connection = conn.connect()
+    if connection is None:
+        print("Failed to connect to the database.")
+        return None
+
+    try:
+        with connection.cursor() as cursor:
+            select_query = """
+                SELECT id, memory_type, key, value, priority, relevance, created_at, updated_at, expires_at, source, tags
+                FROM public.working_memory
+                WHERE session_id = %s AND active = true
+                ORDER BY created_at DESC;
+            """
+            cursor.execute(select_query, (session_id,))
+            results = cursor.fetchall()
+            return results
+    except Exception as e:
+        print(f"An error occurred while retrieving working memory: {e}")
+        return None
+    finally:
+        connection.close()
