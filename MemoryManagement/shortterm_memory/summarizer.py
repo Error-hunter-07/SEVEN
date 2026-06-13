@@ -39,14 +39,52 @@ import os
 #     return new_summary
 
 
-def compiled_scratchpad_memory(seven_notes, conversation_summary, current_goal, subtasks, retrieved_context, tool_outputs, memory_updates):
+def compiled_scratchpad_memory(
+    current_goal, subtasks, completed_subtasks, current_step, next_action,
+    summary, seven_notes,
+    active_tool, tool_outputs,
+    retrieved_context,
+    memory_updates,
+    retry_count, last_error
+):
     compiled = "SEVEN'S SHORT-TERM MEMORY\n\n"
+    
+    # Reasoning
     compiled += "SEVEN NOTES:\n" + seven_notes + "\n\n"
-    compiled += "CONVERSATION SUMMARY:\n" + conversation_summary + "\n\n"
+    compiled += "CONVERSATION SUMMARY:\n" + summary + "\n\n"
+    
+    # Planning
     compiled += "CURRENT GOAL:\n" + current_goal + "\n\n"
-    compiled += "SUBTASKS:\n" + "\n".join(subtasks) + "\n\n"
-    compiled += "RETRIEVED CONTEXT:\n" + "\n".join(retrieved_context) + "\n\n"
-    compiled += "TOOL OUTPUTS:\n" + "\n".join(tool_outputs) + "\n\n"
-    compiled += "MEMORY UPDATES:\n" + "\n".join(memory_updates) + "\n\n"
+    compiled += "SUBTASKS:\n" + "\n".join(subtasks) if subtasks else "SUBTASKS:\nNone\n\n"
+    compiled += "\n\nCOMPLETED SUBTASKS:\n" + "\n".join(completed_subtasks) if completed_subtasks else "COMPLETED SUBTASKS:\nNone\n\n"
+    compiled += "\n\nCURRENT STEP:\n" + current_step + "\n\n"
+    compiled += "NEXT ACTION:\n" + next_action + "\n\n"
+    
+    # Execution
+    compiled += "ACTIVE TOOL:\n" + active_tool + "\n\n"
+    if tool_outputs:
+        compiled += "TOOL OUTPUTS:\n"
+        for tool_name, output in tool_outputs.items():
+            compiled += f"  {tool_name}: {output}\n"
+        compiled += "\n"
+    else:
+        compiled += "TOOL OUTPUTS:\nNone\n\n"
+    
+    # Context
+    compiled += "RETRIEVED CONTEXT:\n" + "\n".join(retrieved_context) if retrieved_context else "RETRIEVED CONTEXT:\nNone\n\n"
+    compiled += "\n\n"
+    
+    # Memory
+    if memory_updates:
+        compiled += "MEMORY UPDATES:\n"
+        for update in memory_updates:
+            compiled += f"  {update}\n"
+        compiled += "\n"
+    else:
+        compiled += "MEMORY UPDATES:\nNone\n\n"
+    
+    # Robustness
+    compiled += "RETRY COUNT:\n" + str(retry_count) + "\n\n"
+    compiled += "LAST ERROR:\n" + (str(last_error) if last_error else "None") + "\n\n"
 
     return compiled

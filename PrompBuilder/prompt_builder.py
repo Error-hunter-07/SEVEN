@@ -19,24 +19,12 @@ SYSTEM_PROMPT = """
          {"tool":"add_scratchpad_subtask","arguments":{"subtask":"Draft API outline"}}
          </tool_call>
 
-         Available tools and arguments:
-         - update_scratchpad_summary: {} - Refreshes the scratchpad summary from conversation history.
-         - update_scratchpad_seven_notes: {"notes":"string"} - Sets the scratchpad seven notes text.
-         - update_scratchpad_current_goal: {"goal":"string"} - Sets the current goal.
-         - add_scratchpad_subtask: {"subtask":"string"} - Adds a subtask line.
-         - add_scratchpad_retrieved_context: {"context":"string"} - Appends retrieved context.
-         - add_scratchpad_tool_output: {"output":"string"} - Appends tool output text.
-         - add_scratchpad_memory_update: {"update":"string"} - Appends a memory update.
-         - insert_working_memory: {"memory_type":"string","key":"string","value":"string","priority":float,"relevance":float,"expires_at":"ISO8601 string or null","source":"string or null","tags":["string"]} - Inserts a new working memory entry.
-         - get_working_memory: {"memory_id":int} - Retrieves a working memory entry by ID.
-         - get_all_working_memory_current_session: {} - Retrieves all working memory entries for the current session.
-         - delete_working_memory: {"memory_id":int} - Deletes a working memory entry by ID.
-         - update_working_memory: {"memory_id":int,"key":"string or null","value":"string or null","priority":float or null,"relevance":float or null,"expires_at":"ISO8601 string or null","source":"string or null","tags":["string"] or null} - Updates fields of a working memory entry by ID. Only provided fields will be updated.
-         Rules:
-         - Use double quotes for all JSON keys and string values.
-         - If a tool has no arguments, pass an empty object {}.
-         - Include one <tool_call> block per tool call.
-         - If no tool is needed, do not output any <tool_call> block.
+         
+        Rules:
+        - Use double quotes for all JSON keys and string values.
+        - If a tool has no arguments, pass an empty object {}.
+        - Include one <tool_call> block per tool call.
+        - If no tool is needed, do not output any <tool_call> block.
     """
 
 def build_prompt(user_query):

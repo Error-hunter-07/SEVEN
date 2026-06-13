@@ -25,63 +25,69 @@ registry = ToolRegistry()
 registry.register(
     Tool(
         name="update_scratchpad_summary",
-        description="Updates the scratchpad summary with the latest conversation summary.",
-        parameters={},
+        description="Adds conversation summary text to the scratchpad summary section.",
+        parameters={"summary_text": "The summary text to add."},
         func=scratchpad_tool.update_scratchpad_summary
     )
 )
 
 registry.register(
     Tool(
-        name="update_scratchpad_seven_notes",
-        description="Updates the seven notes section of the scratchpad.",
-        parameters={"notes": "The new seven notes content."},
-        func=scratchpad_tool.update_scratchpad_seven_notes
+        name="update_scratchpad_state",
+        description="Updates the scratchpad state dict at the specified section and key. State sections: planning, execution, reflection, tool_outputs.",
+        parameters={
+            "section": "str - One of: 'planning', 'execution', 'reflection', 'tool_outputs'",
+            "key": "str - The key within the section to update (e.g., 'current_goal', 'active_tool', 'seven_notes')",
+            "value": "any - The value to set"
+        },
+        func=scratchpad_tool.update_scratchpad_state
     )
 )
 
-registry.register(
-    Tool(
-        name="update_scratchpad_current_goal",      
-        description="Updates the current goal section of the scratchpad.",
-        parameters={"goal": "The new current goal."},
-        func=scratchpad_tool.update_scratchpad_current_goal
-    )
-)
-
-registry.register(
-    Tool(
-        name="add_scratchpad_subtask",
-        description="Adds a new subtask to the scratchpad.",
-        parameters={"subtask": "The subtask to add."},
-        func=scratchpad_tool.add_scratchpad_subtask
-    )
-)
-
-registry.register(
-    Tool(
-        name="add_scratchpad_retrieved_context",
-        description="Adds retrieved context to the scratchpad.",
-        parameters={"context": "The context to add."},
-        func=scratchpad_tool.add_scratchpad_retrieved_context
-    )
-)   
-
-registry.register(
-    Tool(
-        name="add_scratchpad_tool_output",
-        description="Adds tool output to the scratchpad.",
-        parameters={"output": "The tool output to add."},
-        func=scratchpad_tool.add_scratchpad_tool_output
-    )
-)
+# registry.register(
+#     Tool(
+#         name="add_scratchpad_retrieved_context",
+#         description="Adds retrieved memory or context to the scratchpad for later reference.",
+#         parameters={"context": "The context or memory to add."},
+#         func=scratchpad_tool.add_scratchpad_retrieved_context
+#     )
+# )
 
 registry.register(
     Tool(
         name="add_scratchpad_memory_update",
-        description="Adds a memory update to the scratchpad.",
-        parameters={"update": "The memory update to add."},
+        description="Adds a memory update to the scratchpad with strict format validation.",
+        parameters={
+            "update": {
+                "action": "str - 'add'/'update'/'delete'",
+                "memory_type": "str - 'goal'/'fact'/'context'",
+                "key": "str - unique identifier",
+                "value": "any type - the content",
+                "priority": "float 0-1",
+                "confidence": "float 0-1",
+                "source": "str (optional)",
+                "tags": "list (optional)"
+            }
+        },
         func=scratchpad_tool.add_scratchpad_memory_update
+    )
+)
+
+registry.register(
+    Tool(
+        name="get_scratchpad_state",
+        description="Retrieves the current scratchpad state dict including planning, execution, reflection, and tool_outputs sections.",
+        parameters={},
+        func=scratchpad_tool.get_scratchpad_state
+    )
+)
+
+registry.register(
+    Tool(
+        name="get_scratchpad_retrieved_context",
+        description="Retrieves all retrieved memories and context stored in the scratchpad.",
+        parameters={},
+        func=scratchpad_tool.get_scratchpad_retrieved_context
     )
 )
 

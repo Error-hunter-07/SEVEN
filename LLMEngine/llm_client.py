@@ -1,5 +1,6 @@
 import os
 import sys
+from ToolCalling.register import registry
 
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -42,6 +43,17 @@ def request_completion(request_messages):
         json={
             "model": os.getenv("LLM_MODEL"),
             "messages": request_messages,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters
+                    }
+                }
+                for tool in registry.list_tools()
+            ],
             "temperature": 0.7,
             "max_tokens": 2048
         },
