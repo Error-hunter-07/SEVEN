@@ -25,7 +25,7 @@ conn = db.DB()
 #     CONSTRAINT working_memory_pkey PRIMARY KEY (id)
 # )
 
-def insert_working_memory(session_id, memory_type, key, value, priority=0.5, relevance=0.5, expires_at=None, source=None, tags=None):
+def insert_working_memory(session_id, memory_type, key, value, priority=0.5, relevance=0.5, source=None, tags=None):
     connection = conn.connect()
     if connection is None:
         print("Failed to connect to the database.")
@@ -66,7 +66,6 @@ def insert_working_memory(session_id, memory_type, key, value, priority=0.5, rel
                         json.dumps(value),
                         priority,
                         relevance,
-                        expires_at,
                         source,
                         tags
                     )
@@ -81,7 +80,7 @@ def insert_working_memory(session_id, memory_type, key, value, priority=0.5, rel
     finally:
         connection.close()
 
-def get_working_memory(uuid_memory_id):
+def get_working_memory():
     connection = conn.connect()
     if connection is None:
         print("Failed to connect to the database.")
@@ -92,10 +91,11 @@ def get_working_memory(uuid_memory_id):
             select_query = """
                 SELECT id, memory_type, key, value, priority, relevance, created_at, updated_at, expires_at, source, tags
                 FROM public.working_memory
-                WHERE id = %s::uuid AND active = true
-                ORDER BY created_at DESC;
+                WHERE active = true
+                ORDER BY created_at DESC
+                LIMIT 1;
             """
-            cursor.execute(select_query, (uuid_memory_id,))
+            cursor.execute(select_query)
             results = cursor.fetchall()
             return results
     except Exception as e:
@@ -156,28 +156,28 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
     finally:
         connection.close()
 
-def delete_working_memory(memory_id):
-    connection = conn.connect()
-    if connection is None:
-        print("Failed to connect to the database.")
-        return False
+# def delete_working_memory(memory_id):
+#     connection = conn.connect()
+#     if connection is None:
+#         print("Failed to connect to the database.")
+#         return False
 
-    try:
-        with connection.cursor() as cursor:
-            delete_query = """
-                UPDATE public.working_memory
-                SET active = false, updated_at = NOW()
-                WHERE id = %s::uuid;
-            """
-            cursor.execute(delete_query, (memory_id,))
-            connection.commit()
-            return True
-    except Exception as e:
-        print(f"An error occurred while deleting working memory: {e}")
-        connection.rollback()
-        return False
-    finally:
-        connection.close()
+#     try:
+#         with connection.cursor() as cursor:
+#             delete_query = """
+#                 UPDATE public.working_memory
+#                 SET active = false, updated_at = NOW()
+#                 WHERE id = %s::uuid;
+#             """
+#             cursor.execute(delete_query, (memory_id,))
+#             connection.commit()
+#             return True
+#     except Exception as e:
+#         print(f"An error occurred while deleting working memory: {e}")
+#         connection.rollback()
+#         return False
+#     finally:
+#         connection.close()
 
 def get_all_current_session_working_memory(session_id):
     connection = conn.connect()

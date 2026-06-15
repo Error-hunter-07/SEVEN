@@ -1,4 +1,8 @@
+import json
+from unittest import case
+
 from .summarizer import compiled_scratchpad_memory
+import Tools.working_memory_tool as working_memory_tool
 
 class Scratchpad:
     def __init__(self):
@@ -97,59 +101,53 @@ class Scratchpad:
     def add_retrieved_context(self, context):
         self.retrieved_memories.append(context)
 
-    def get_retrieved_context(self):
-        return self.retrieved_memories
+    def get_retrieved_context(self, working_memory_only, include_tool_outputs, include_all_working_memory):
+        retrieved_context = ""
+        if(working_memory_only):
+            retrieved_context += working_memory_tool.get_working_memory()
+        
+        if(include_tool_outputs):
+            retrieved_context += self.get_tool_outputs()
+
+        if(include_all_working_memory):
+            retrieved_context += working_memory_tool.get_all_working_memory_current_session()
+
+        
+
+    # def add_working_memory_to_scratchpad(self, memory):
+    #     self.retrieved_memories.append(memory)
 
     def clear_retrieved_context(self):
         self.retrieved_memories = []
 
     # Memory methods
-    def add_memory_update(self, update):
-        """Add a memory update with strict format validation.
-        
-        Required format:
-        {
-            "action": "add",              # Required: str (e.g., "add", "update", "delete")
-            "memory_type": "goal",         # Required: str (e.g., "goal", "fact", "context")
-            "key": "current_goal",         # Required: str (unique identifier)
-            "value": "Build planner",      # Required: any type
-            "priority": 0.95,              # Required: float/int (0-1)
-            "confidence": 0.9,             # Required: float/int (0-1)
-            # Optional fields:
-            # "source": "LLM",
-            # "tags": ["planning", "goal"]
-        }
-        """
-        required_fields = {"action", "memory_type", "key", "value", "priority", "confidence"}
-        
-        if not isinstance(update, dict):
-            raise TypeError(f"Memory update must be a dictionary, got {type(update).__name__}")
-        
-        provided_fields = set(update.keys())
-        missing_fields = required_fields - provided_fields
-        
-        if missing_fields:
-            raise ValueError(
-                f"Memory update is missing required fields: {missing_fields}. "
-                f"Required: action, memory_type, key, value, priority (0-1), confidence (0-1)"
+    def add_memory_update(self, type, data, update):
+        data_parsed = json.loads(data)
+        if type == "working_memory" and not update:
+            return working_memory_tool.insert_working_memory(
+                memory_type=data_parsed.get("memory_type"),
+                key=data_parsed.get("key"),
+                value=data_parsed.get("value"),
+                priority=data_parsed.get("priority", 0.5),
+                relevance=data_parsed.get("relevance", 0.5),
+                source=data_parsed.get("source"),
+                tags=data_parsed.get("tags")
             )
-        
-        if not isinstance(update["action"], str):
-            raise TypeError(f"'action' must be string, got {type(update['action']).__name__}")
-        if not isinstance(update["memory_type"], str):
-            raise TypeError(f"'memory_type' must be string, got {type(update['memory_type']).__name__}")
-        if not isinstance(update["key"], str):
-            raise TypeError(f"'key' must be string, got {type(update['key']).__name__}")
-        if not isinstance(update["priority"], (int, float)):
-            raise TypeError(f"'priority' must be number, got {type(update['priority']).__name__}")
-        if not isinstance(update["confidence"], (int, float)):
-            raise TypeError(f"'confidence' must be number, got {type(update['confidence']).__name__}")
-        if not (0 <= update["priority"] <= 1):
-            raise ValueError(f"'priority' must be between 0 and 1, got {update['priority']}")
-        if not (0 <= update["confidence"] <= 1):
-            raise ValueError(f"'confidence' must be between 0 and 1, got {update['confidence']}")
-        
-        self.memory_updates.append(update)
+        elif type == "working_memory" and update:
+            return working_memory_tool.update_working_memory(
+                memory_id=data_parsed.get("memory_id"),
+                key=data_parsed.get("key"),
+                value=data_parsed.get("value"),
+                priority=data_parsed.get("priority"),
+                relevance=data_parsed.get("relevance"),
+                expires_at=data_parsed.get("expires_at"),
+                source=data_parsed.get("source"),
+                tags=data_parsed.get("tags")
+            )
+        if(update):
+            self.memory_updates.append(type+"<update>" +  ":" + data)
+        else:            
+            self.memory_updates.append(type+"<insert>" + ":" + data)
 
     def get_memory_updates(self):
         return self.memory_updates
@@ -206,6 +204,5 @@ def get_compiled_memory():
 
 
 def clear_scratchpad():
-    """Clear all scratchpad data"""
     global scratchpad
     scratchpad = Scratchpad()
