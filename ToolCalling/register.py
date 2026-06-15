@@ -1,7 +1,7 @@
 from Tools.tool import Tool
 import Tools.scratchpad_tool as scratchpad_tool
-
 import Tools.working_memory_tool as working_memory_tool
+
 
 class ToolRegistry:
 
@@ -16,75 +16,103 @@ class ToolRegistry:
 
     def get_tool(self, name):
         return self.tools.get(name)
-    
+
     def list_tools(self):
         return list(self.tools.values())
-    
+
+
 registry = ToolRegistry()
+
 
 registry.register(
     Tool(
         name="update_scratchpad_summary",
-        description="Adds conversation summary text to the scratchpad summary section.",
-        parameters={"summary_text": "The summary text to add."},
+        description="Appends text to the scratchpad conversation summary.",
+        parameters={"summary_text": "str - The summary text to append."},
         func=scratchpad_tool.update_scratchpad_summary
     )
 )
 
+
 registry.register(
     Tool(
         name="update_scratchpad_state",
-        description="Updates the scratchpad state dict at the specified section and key. State sections: planning, execution, reflection, tool_outputs.",
+        description=(
+            "Updates a single key inside the scratchpad state. "
+            "Use this to track goals, steps, notes, errors, and active tools. "
+            "Valid sections and their keys — "
+            "planning: current_goal, subtasks, completed_subtasks, current_step, next_action. "
+            "execution: active_tool, retry_count, last_error. "
+            "reflection: seven_notes. "
+            "tool_outputs: any tool name as key."
+        ),
         parameters={
-            "section": "str - One of: 'planning', 'execution', 'reflection', 'tool_outputs'",
-            "key": "str - The key within the section to update (e.g., 'current_goal', 'active_tool', 'seven_notes')",
-            "value": "any - The value to set"
+            "section": "str - one of: 'planning', 'execution', 'reflection', 'tool_outputs'",
+            "key": "str - the key within the section (e.g. 'current_goal', 'last_error')",
+            "value": "any - the value to set"
         },
         func=scratchpad_tool.update_scratchpad_state
     )
 )
 
-registry.register(
-    Tool(
-        name="add_scratchpad_memory_update",
-        description="Adds a memory update to the scratchpad with strict format validation.",
-        parameters={
-            "update": {
-                "action": "str - 'add'/'update'/'delete'",
-                "memory_type": "str - 'goal'/'fact'/'context'",
-                "key": "str - unique identifier",
-                "value": "any type - the content",
-                "priority": "float 0-1",
-                "confidence": "float 0-1",
-                "source": "str (optional)",
-                "tags": "list (optional)"
-            }
-        },
-        func=scratchpad_tool.add_scratchpad_memory_update
-    )
-)
 
 registry.register(
     Tool(
         name="get_scratchpad_state",
-        description="Retrieves the current scratchpad state dict including planning, execution, reflection, and tool_outputs sections.",
+        description="Returns the full current scratchpad state including planning, execution, reflection, and tool_outputs sections.",
         parameters={},
         func=scratchpad_tool.get_scratchpad_state
     )
 )
 
+
+registry.register(
+    Tool(
+        name="add_scratchpad_memory_update",
+        description=(
+            "Inserts or updates a working memory entry via the scratchpad bridge. "
+            "Currently supports memory_type='working_memory' only. "
+            "Set update=False to insert a new record, update=True to update by memory_id."
+        ),
+        parameters={
+            "type": "str - memory category, currently only 'working_memory' is supported",
+            "data": (
+                "str - JSON-encoded object. "
+                "For insert (update=False): {memory_type, key, value, priority (0-1), relevance (0-1), source (optional), tags (optional list)}. "
+                "For update (update=True): {memory_id, key (optional), value (optional), priority (optional), relevance (optional), expires_at (optional), source (optional), tags (optional)}"
+            ),
+            "update": "bool - False to insert a new record, True to update an existing record by memory_id"
+        },
+        func=working_memory_tool.add_scratchpad_memory_update
+    )
+)
+
+
 registry.register(
     Tool(
         name="get_scratchpad_retrieved_context",
-        description="Retrieves all retrieved memories and context stored in the scratchpad.",
+        description="Fetches memory context into the scratchpad. Use to pull working memory before reasoning over it.",
         parameters={
-            "working_memory_only" : "True/False - gets the latest working memory row",
-            "include_tool_outputs" : "True/False - includes the latest tool outputs",
-            "include_all_working_memory" : "True/False - gets all working memory for the current session"
+            "working_memory_only": "bool - True to fetch the latest working memory row",
+            "include_tool_outputs": "bool - True to include the current tool outputs in context",
+            "include_all_working_memory": "bool - True to fetch all working memory for the current session"
         },
         func=scratchpad_tool.get_scratchpad_retrieved_context
     )
 )
+
+
+# Direct DB tools remain commented out — LLM accesses memory only through
+# the scratchpad bridge. Future memory types (episodic, semantic, procedural)
+# will follow the same pattern: their own bridge tool registered here,
+# no direct DB tool exposed to the LLM.
+
+# registry.register(Tool(name="insert_working_memory", ...))
+# registry.register(Tool(name="update_working_memory", ...))
+# registry.register(Tool(name="get_working_memory", ...))
+# registry.register(Tool(name="get_all_working_memory_current_session", ...))
+# registry.register(Tool(name="delete_working_memory", ...))
+# registry.register(Tool(name="add_scratchpad_retrieved_context", ...))
 
 # registry.register(
 #     Tool(

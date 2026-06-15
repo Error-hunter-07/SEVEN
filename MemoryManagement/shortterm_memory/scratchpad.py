@@ -1,15 +1,17 @@
-import json
-from unittest import case
+import json 
 
 from .summarizer import compiled_scratchpad_memory
-import Tools.working_memory_tool as working_memory_tool
+
 
 class Scratchpad:
     def __init__(self):
+        self._initialize()
+
+    def _initialize(self):
         self.summary = ""
         self.retrieved_memories = []
         self.memory_updates = []
-        
+
         self.state = {
             "planning": {
                 "current_goal": "",
@@ -101,53 +103,14 @@ class Scratchpad:
     def add_retrieved_context(self, context):
         self.retrieved_memories.append(context)
 
-    def get_retrieved_context(self, working_memory_only, include_tool_outputs, include_all_working_memory):
-        retrieved_context = ""
-        if(working_memory_only):
-            retrieved_context += working_memory_tool.get_working_memory()
-        
-        if(include_tool_outputs):
-            retrieved_context += self.get_tool_outputs()
-
-        if(include_all_working_memory):
-            retrieved_context += working_memory_tool.get_all_working_memory_current_session()
-
-        
-
-    # def add_working_memory_to_scratchpad(self, memory):
-    #     self.retrieved_memories.append(memory)
-
     def clear_retrieved_context(self):
         self.retrieved_memories = []
 
-    # Memory methods
     def add_memory_update(self, type, data, update):
-        data_parsed = json.loads(data)
-        if type == "working_memory" and not update:
-            return working_memory_tool.insert_working_memory(
-                memory_type=data_parsed.get("memory_type"),
-                key=data_parsed.get("key"),
-                value=data_parsed.get("value"),
-                priority=data_parsed.get("priority", 0.5),
-                relevance=data_parsed.get("relevance", 0.5),
-                source=data_parsed.get("source"),
-                tags=data_parsed.get("tags")
-            )
-        elif type == "working_memory" and update:
-            return working_memory_tool.update_working_memory(
-                memory_id=data_parsed.get("memory_id"),
-                key=data_parsed.get("key"),
-                value=data_parsed.get("value"),
-                priority=data_parsed.get("priority"),
-                relevance=data_parsed.get("relevance"),
-                expires_at=data_parsed.get("expires_at"),
-                source=data_parsed.get("source"),
-                tags=data_parsed.get("tags")
-            )
-        if(update):
-            self.memory_updates.append(type+"<update>" +  ":" + data)
-        else:            
-            self.memory_updates.append(type+"<insert>" + ":" + data)
+        if update:
+            self.memory_updates.append(type + "<update>" + ":" + data)
+        else:
+            self.memory_updates.append(type + "<insert>" + ":" + data)
 
     def get_memory_updates(self):
         return self.memory_updates
@@ -173,7 +136,9 @@ class Scratchpad:
 
     def clear_last_error(self):
         self.state["execution"]["last_error"] = None
-    
+
+    def reset(self):
+        self._initialize()
 
 
 scratchpad = Scratchpad()
@@ -193,8 +158,6 @@ def get_compiled_memory():
         # Execution
         active_tool=scratchpad.get_active_tool(),
         tool_outputs=scratchpad.get_tool_outputs(),
-        # Context
-        retrieved_context=scratchpad.get_retrieved_context(),
         # Memory
         memory_updates=scratchpad.get_memory_updates(),
         # Robustness
@@ -204,5 +167,4 @@ def get_compiled_memory():
 
 
 def clear_scratchpad():
-    global scratchpad
-    scratchpad = Scratchpad()
+    scratchpad.reset()
