@@ -1,4 +1,4 @@
-import json 
+import json
 
 from .summarizer import compiled_scratchpad_memory
 
@@ -106,11 +106,11 @@ class Scratchpad:
     def clear_retrieved_context(self):
         self.retrieved_memories = []
 
-    def add_memory_update(self, type, data, update):
+    def add_memory_update(self, memory_type, data, update):
         if update:
-            self.memory_updates.append(type + "<update>" + ":" + data)
+            self.memory_updates.append(memory_type + "<update>" + ":" + data)
         else:
-            self.memory_updates.append(type + "<insert>" + ":" + data)
+            self.memory_updates.append(memory_type + "<insert>" + ":" + data)
 
     def get_memory_updates(self):
         return self.memory_updates

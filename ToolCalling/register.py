@@ -75,7 +75,7 @@ registry.register(
             "Set update=False to insert a new record, update=True to update by memory_id."
         ),
         parameters={
-            "type": "str - memory category, currently only 'working_memory' is supported",
+            "memory_type": "str - memory category, currently only 'working_memory' is supported",
             "data": (
                 "str - JSON-encoded object. "
                 "For insert (update=False): {memory_type, key, value, priority (0-1), relevance (0-1), source (optional), tags (optional list)}. "

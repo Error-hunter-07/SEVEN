@@ -2,6 +2,15 @@ import MemoryManagement.shortterm_memory.scratchpad as scratchpad
 import MemoryManagement.shortterm_memory.summarizer as summarizer
 
 
+_ALLOWED_KEYS = {
+    "planning":   {"current_goal", "subtasks", "completed_subtasks", "current_step", "next_action"},
+    "execution":  {"active_tool", "retry_count", "last_error"},
+    "reflection": {"seven_notes"},
+    # tool_outputs accepts any string key (tool names are dynamic)
+    "tool_outputs": None,
+}
+
+
 def get_scratchpad_memory():
     return scratchpad.get_compiled_memory()
 
@@ -55,7 +64,6 @@ def add_scratchpad_tool_output(tool_name, output):
     scratchpad.scratchpad.add_tool_output(tool_name, output)
 
 
-
 def get_scratchpad_memory_updates():
     return scratchpad.scratchpad.get_memory_updates()
 
@@ -79,22 +87,33 @@ def update_scratchpad_state(section, key, value):
 
     Args:
         section: One of 'planning', 'execution', 'reflection', 'tool_outputs'
-        key: The key within the section to update
-        value: The value to set
+        key:     The key within the section to update
+        value:   The value to set
     """
-    valid_sections = ['planning', 'execution', 'reflection', 'tool_outputs']
+    valid_sections = list(_ALLOWED_KEYS.keys())
     if section not in valid_sections:
         raise ValueError(f"Invalid section '{section}'. Must be one of: {valid_sections}")
 
+    allowed = _ALLOWED_KEYS[section]
+    if allowed is not None and key not in allowed:
+        raise ValueError(
+            f"Invalid key '{key}' for section '{section}'. "
+            f"Allowed keys: {sorted(allowed)}"
+        )
+
     scratchpad.scratchpad.state[section][key] = value
-    scratchpad.scratchpad.add_tool_output("update_scratchpad_state", f"Updated {section}.{key} = {value}")
+    scratchpad.scratchpad.add_tool_output(
+        "update_scratchpad_state", f"Updated {section}.{key} = {value}"
+    )
 
 
 def get_scratchpad_state():
     return scratchpad.scratchpad.state
 
 
-def get_scratchpad_retrieved_context(working_memory_only=False, include_tool_outputs=True, include_all_working_memory=False):
+def get_scratchpad_retrieved_context(working_memory_only=False,
+                                     include_tool_outputs=True,
+                                     include_all_working_memory=False):
     import Tools.working_memory_tool as working_memory_tool
 
     retrieved_context = ""
@@ -103,7 +122,6 @@ def get_scratchpad_retrieved_context(working_memory_only=False, include_tool_out
         retrieved_context += str(working_memory_tool.get_working_memory())
 
     if include_tool_outputs:
-
         retrieved_context += str(scratchpad.scratchpad.get_tool_outputs())
 
     if include_all_working_memory:

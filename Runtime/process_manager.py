@@ -10,9 +10,31 @@ class ProcessManager:
 
     Responsibilities:
     - start / stop / restart model
+
+    CHANGED: Enforced true singleton via __new__. Previously _instance was
+    set at the end of __init__, meaning you could construct a second
+    ProcessManager() and get a fresh object while _instance still pointed to
+    the first one (or vice-versa). Now __new__ raises RuntimeError on a second
+    construction attempt, making accidental double-instantiation impossible.
+    To create the singleton: ProcessManager(model_path=..., ...).
+    To retrieve it later: ProcessManager.get_instance().
+
     """
 
     _instance: Optional['ProcessManager'] = None
+
+    def __new__(cls, *args, **kwargs):
+        # CHANGED: Singleton guard in __new__. If an instance already exists
+        # and the caller is trying to construct a second one, raise immediately
+        # so the bug is visible rather than silently creating a duplicate.
+        if cls._instance is not None:
+            raise RuntimeError(
+                "ProcessManager is a singleton. "
+                "Use ProcessManager.get_instance() to retrieve the existing instance."
+            )
+        instance = super().__new__(cls)
+        cls._instance = instance
+        return instance
 
     def __init__(
         self,
@@ -22,6 +44,11 @@ class ProcessManager:
         ctx_size: int = 16384,
         gpu_layers: int = 999,
     ):
+        # CHANGED: Guard against __init__ being called again on the already-
+        # initialised singleton (Python calls __init__ every time even when
+        # __new__ returns an existing instance if you bypass the guard above).
+        if getattr(self, "_initialised", False):
+            return
 
         self.model_path = model_path
         self.llama_cli_path = llama_cli_path
@@ -35,8 +62,9 @@ class ProcessManager:
         self.alive = False
         self.session_id = session_generator.generate_universal_session_id()
         print("Session id generated as:- " + self.session_id)
-        
-        ProcessManager._instance = self
+
+        # CHANGED: Mark as initialised so repeated __init__ calls are no-ops.
+        self._initialised = True
 
     # PROCESS LIFECYCLE
 
@@ -47,35 +75,34 @@ class ProcessManager:
             return
 
         command = [
-                self.llama_cli_path,
+            self.llama_cli_path,
 
-                # MODEL
-                "-m", self.model_path,
+            # MODEL
+            "-m", self.model_path,
 
-                # MULTIMODAL PROJECTOR (REQUIRED FOR QWEN3-VL)
-                "--mmproj", self.mmproj_path,
+            # MULTIMODAL PROJECTOR (REQUIRED FOR VL MODELS)
+            "--mmproj", self.mmproj_path,
 
-                # CONTEXT WINDOW
-                "-c", str(self.ctx_size),
+            # CONTEXT WINDOW
+            "-c", str(self.ctx_size),
 
-                # GPU OFFLOAD LAYERS
-                "-ngl", str(self.gpu_layers),
+            # GPU OFFLOAD LAYERS
+            "-ngl", str(self.gpu_layers),
 
-                "--cache-prompt",
+            "--cache-prompt",
 
-                "--cache-reuse", "256",
+            "--cache-reuse", "256",
 
-                "--ctx-checkpoints", "64",
+            "--ctx-checkpoints", "64",
 
-                "--parallel", "4",
+            "--parallel", "4",
 
-                "--cont-batching",
+            "--cont-batching",
 
-                "--host", "127.0.0.1",
+            "--host", "127.0.0.1",
 
-                "--port", "8081"
-
-            ]
+            "--port", "8081"
+        ]
 
         print("[PROCESS] Starting llama.cpp subprocess...")
 
@@ -93,7 +120,6 @@ class ProcessManager:
             raise
 
         self.alive = True
-
         print("[PROCESS] Started successfully")
 
     def stop(self):
@@ -138,11 +164,9 @@ class ProcessManager:
     # HIGH LEVEL API
 
     def start_for_client(self) -> None:
-
         self.start()
 
     def stop_from_cli(self) -> None:
-
         self.stop()
 
     def get_session_id(self):
@@ -152,5 +176,8 @@ class ProcessManager:
     def get_instance() -> 'ProcessManager':
         """Get the singleton instance of ProcessManager."""
         if ProcessManager._instance is None:
-            raise RuntimeError("ProcessManager not initialized. Call ProcessManager(...) first.")
+            raise RuntimeError(
+                "ProcessManager not initialised. "
+                "Call ProcessManager(model_path=..., llama_cli_path=..., mmproj_path=...) first."
+            )
         return ProcessManager._instance

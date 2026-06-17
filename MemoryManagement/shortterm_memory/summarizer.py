@@ -43,23 +43,22 @@ def compiled_scratchpad_memory(
     current_goal, subtasks, completed_subtasks, current_step, next_action,
     summary, seven_notes,
     active_tool, tool_outputs,
-    retrieved_context,
     memory_updates,
     retry_count, last_error
 ):
     compiled = "SEVEN'S SHORT-TERM MEMORY\n\n"
-    
+
     # Reasoning
     compiled += "SEVEN NOTES:\n" + seven_notes + "\n\n"
     compiled += "CONVERSATION SUMMARY:\n" + summary + "\n\n"
-    
+
     # Planning
     compiled += "CURRENT GOAL:\n" + current_goal + "\n\n"
     compiled += "SUBTASKS:\n" + "\n".join(subtasks) if subtasks else "SUBTASKS:\nNone\n\n"
     compiled += "\n\nCOMPLETED SUBTASKS:\n" + "\n".join(completed_subtasks) if completed_subtasks else "COMPLETED SUBTASKS:\nNone\n\n"
     compiled += "\n\nCURRENT STEP:\n" + current_step + "\n\n"
     compiled += "NEXT ACTION:\n" + next_action + "\n\n"
-    
+
     # Execution
     compiled += "ACTIVE TOOL:\n" + active_tool + "\n\n"
     if tool_outputs:
@@ -69,11 +68,7 @@ def compiled_scratchpad_memory(
         compiled += "\n"
     else:
         compiled += "TOOL OUTPUTS:\nNone\n\n"
-    
-    # Context
-    compiled += "RETRIEVED CONTEXT:\n" + "\n".join(retrieved_context) if retrieved_context else "RETRIEVED CONTEXT:\nNone\n\n"
-    compiled += "\n\n"
-    
+
     # Memory
     if memory_updates:
         compiled += "MEMORY UPDATES:\n"
@@ -82,7 +77,7 @@ def compiled_scratchpad_memory(
         compiled += "\n"
     else:
         compiled += "MEMORY UPDATES:\nNone\n\n"
-    
+
     # Robustness
     compiled += "RETRY COUNT:\n" + str(retry_count) + "\n\n"
     compiled += "LAST ERROR:\n" + (str(last_error) if last_error else "None") + "\n\n"

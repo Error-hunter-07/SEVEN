@@ -1,8 +1,8 @@
 import json
 from Database import db
 
+conn_pool = db.DB()
 
-conn = db.DB()
 
 # This is the SQL schema for the working_memory table in PostgreSQL. It defines the structure of the table, including the columns, their data types, and constraints. The table is designed to store information related to working memory, such as session ID, memory type, key-value pairs, priority, relevance, timestamps, source, tags, access count, and active status.
 # CREATE TABLE IF NOT EXISTS public.working_memory
@@ -25,89 +25,88 @@ conn = db.DB()
 #     CONSTRAINT working_memory_pkey PRIMARY KEY (id)
 # )
 
-def insert_working_memory(session_id, memory_type, key, value, priority=0.5, relevance=0.5, source=None, tags=None):
-    connection = conn.connect()
+
+def insert_working_memory(session_id, memory_type, key, value, priority=0.5,
+                          relevance=0.5, source=None, tags=None):
+    connection = conn_pool.get_connection()
     if connection is None:
-        print("Failed to connect to the database.")
+        print("[DB] insert_working_memory: Failed to get connection from pool.")
         return None
 
     try:
         with connection.cursor() as cursor:
             insert_query = """
                 INSERT INTO public.working_memory (
-                    id,
-                    session_id,
-                    memory_type,
-                    key,
-                    value,
-                    priority,
-                    relevance,
-                    created_at,
-                    updated_at,
-                    expires_at,
-                    source,
-                    tags
+                    id, session_id, memory_type, key, value,
+                    priority, relevance,
+                    created_at, updated_at, expires_at,
+                    source, tags
                 )
                 VALUES (
                     gen_random_uuid(),
                     %s, %s, %s, %s::jsonb,
                     %s, %s,
-                    NOW(), NOW(),
-                    %s, %s, %s
+                    NOW(), NOW(), %s,
+                    %s, %s
                 )
                 RETURNING id;
             """
             cursor.execute(
-                    insert_query,
-                    (
-                        session_id,
-                        memory_type,
-                        key,
-                        json.dumps(value),
-                        priority,
-                        relevance,
-                        source,
-                        tags
-                    )
+                insert_query,
+                (
+                    session_id,
+                    memory_type,
+                    key,
+                    json.dumps(value),
+                    priority,
+                    relevance,
+                    source,
+                    tags
                 )
+            )
             new_id = cursor.fetchone()[0]
             connection.commit()
             return new_id
     except Exception as e:
-        print(f"An error occurred while inserting working memory: {e}")
+        print(f"[DB] insert_working_memory error: {e}")
         connection.rollback()
         return None
     finally:
-        connection.close()
+        conn_pool.put_connection(connection)
 
-def get_working_memory():
-    connection = conn.connect()
+
+def get_working_memory(session_id):
+    connection = conn_pool.get_connection()
     if connection is None:
-        print("Failed to connect to the database.")
+        print("[DB] get_working_memory: Failed to get connection from pool.")
         return None
 
     try:
         with connection.cursor() as cursor:
             select_query = """
-                SELECT id, memory_type, key, value, priority, relevance, created_at, updated_at, expires_at, source, tags
+                SELECT id, memory_type, key, value, priority, relevance,
+                       created_at, updated_at, expires_at, source, tags
                 FROM public.working_memory
-                WHERE active = true
+                WHERE session_id = %s AND active = true
                 ORDER BY created_at DESC
                 LIMIT 1;
             """
-            cursor.execute(select_query)
+            cursor.execute(select_query, (session_id,))
             results = cursor.fetchall()
             return results
     except Exception as e:
-        print(f"An error occurred while retrieving working memory: {e}")
+        print(f"[DB] get_working_memory error: {e}")
         return None
     finally:
-        connection.close()
+        conn_pool.put_connection(connection)
 
-def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None, tags=None):
-    connection = conn.connect()
+
+def update_working_memory(memory_id, key=None, value=None, priority=None,
+                          relevance=None, expires_at=None, source=None,
+                          tags=None):
+    connection = conn_pool.get_connection()
     if connection is None:
-        print("Failed to connect to the database.")
+        print("[DB] update_working_memory: Failed to get connection from pool.")
         return False
 
     try:
@@ -138,7 +137,7 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
                 update_values.append(tags)
 
             if not update_fields:
-                print("No fields to update.")
+                print("[DB] update_working_memory: No fields to update.")
                 return False
 
             update_query = f"""
@@ -150,11 +149,36 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
             connection.commit()
             return True
     except Exception as e:
-        print(f"An error occurred while updating working memory: {e}")
+        print(f"[DB] update_working_memory error: {e}")
         connection.rollback()
         return False
     finally:
-        connection.close()
+        conn_pool.put_connection(connection)
+
+
+def get_all_current_session_working_memory(session_id):
+    connection = conn_pool.get_connection()
+    if connection is None:
+        print("[DB] get_all_current_session_working_memory: Failed to get connection from pool.")
+        return None
+
+    try:
+        with connection.cursor() as cursor:
+            select_query = """
+                SELECT id, memory_type, key, value, priority, relevance,
+                       created_at, updated_at, expires_at, source, tags
+                FROM public.working_memory
+                WHERE session_id = %s AND active = true
+                ORDER BY created_at DESC;
+            """
+            cursor.execute(select_query, (session_id,))
+            results = cursor.fetchall()
+            return results
+    except Exception as e:
+        print(f"[DB] get_all_current_session_working_memory error: {e}")
+        return None
+    finally:
+        conn_pool.put_connection(connection)
 
 # def delete_working_memory(memory_id):
 #     connection = conn.connect()
@@ -178,26 +202,3 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
 #         return False
 #     finally:
 #         connection.close()
-
-def get_all_current_session_working_memory(session_id):
-    connection = conn.connect()
-    if connection is None:
-        print("Failed to connect to the database.")
-        return None
-
-    try:
-        with connection.cursor() as cursor:
-            select_query = """
-                SELECT id, memory_type, key, value, priority, relevance, created_at, updated_at, expires_at, source, tags
-                FROM public.working_memory
-                WHERE session_id = %s AND active = true
-                ORDER BY created_at DESC;
-            """
-            cursor.execute(select_query, (session_id,))
-            results = cursor.fetchall()
-            return results
-    except Exception as e:
-        print(f"An error occurred while retrieving working memory: {e}")
-        return None
-    finally:
-        connection.close()

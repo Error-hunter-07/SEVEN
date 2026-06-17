@@ -7,23 +7,39 @@ if __package__ is None or __package__ == "":
 
 from Tools.scratchpad_tool import get_scratchpad_memory
 import requests
-# from MemoryManagement.shortterm_memory.conversation_history import trim_context
+
 try:
     from .response_parser import parse_response
 except ImportError:
     from response_parser import parse_response
+
 from dotenv import load_dotenv
-import PrompBuilder.prompt_builder as prompt_builder
+import PromptBuilder.prompt_builder as prompt_builder
 from Runtime.process_manager import ProcessManager
 
 import ToolCalling.executor as tool_executor
 
-messages = []
-process_manager = None
-
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()
 
 
+# ---------------------------------------------------------------------------
+# Conversation history
+# CHANGED: `messages` now persists across turns instead of being cleared
+# after every ask_llm() call. This is essential for KV-cache continuity:
+# llama.cpp's --cache-reuse works by matching the longest common prefix of
+# tokens between successive requests. If we clear the list each turn the
+# prefix is always just [system], so only the system prompt tokens are
+# reused. With history retained the prefix grows turn-by-turn and the cache
+# reuses all prior turns — exactly what --cache-prompt + --cache-reuse 256
+# is designed for.
+#
+# The system message lives at index 0 and is REPLACED (not re-inserted) at
+# the start of each turn with a freshly built prompt so the scratchpad state
+# is always current. This keeps the system message token position stable,
+# which is critical for cache hits — shifting token positions invalidates the
+# cache for all tokens after the shift point.
+# ---------------------------------------------------------------------------
+messages: list[dict] = []
 
 process_manager = ProcessManager(
     model_path=os.getenv("LLM_MODEL_PATH"),
@@ -33,9 +49,17 @@ process_manager = ProcessManager(
 
 try:
     process_manager.start_for_client()
-
 except Exception as e:
     print(f"[ERROR] Failed to start LLM process: {e}")
+
+
+def _build_system_message() -> dict:
+    """Build the system message dict with a freshly compiled prompt."""
+    return {
+        "role": "system",
+        "content": prompt_builder.build_prompt("")
+    }
+
 
 def request_completion(request_messages):
     response = requests.post(
@@ -66,26 +90,33 @@ def request_completion(request_messages):
         .get("content")
     )
 
+
 def ask_llm(query):
-    prompt = prompt_builder.build_prompt(query)
-    # Add user message
+    # CHANGED: System message is REPLACED at index 0 on every turn (not
+    # inserted). This keeps the scratchpad state current in the prompt while
+    # leaving all prior user/assistant turns in place for KV cache reuse.
+    # Old code did messages.insert(0, ...) which would accumulate duplicate
+    # system messages if the list weren't cleared — now clearing is no longer
+    # needed and the system slot is always exactly one entry at position 0.
+    fresh_system = _build_system_message()
+    if messages and messages[0]["role"] == "system":
+        # Replace the existing system message with the freshly built one.
+        messages[0] = fresh_system
+    else:
+        # First turn: no system message yet — prepend it.
+        messages.insert(0, fresh_system)
+
+    # Add the new user turn.
     messages.append({
         "role": "user",
         "content": query
     })
 
-    messages.insert(
-        0,
-        {
-            "role": "system",
-            "content": prompt
-        }
-    )
-
     try:
         assistant_reply = request_completion(messages)
         if assistant_reply is None:
             raise KeyError("No message content in response")
+
         print(assistant_reply)
         tool_executor.execute_tool_calls(assistant_reply)
         parsed_response = parse_response(assistant_reply)
@@ -113,14 +144,26 @@ def ask_llm(query):
                 "Please rephrase your request."
             )
 
+        # CHANGED: Append the assistant reply to history so the next turn
+        # includes it in the message list. This is what allows KV cache reuse
+        # across turns — the model sees the full prior context each request
+        # and llama.cpp reuses all matching prefix tokens from the cache.
+        messages.append({
+            "role": "assistant",
+            "content": assistant_reply
+        })
+
+        # CHANGED: Removed messages.clear() — clearing was the root cause of
+        # SEVEN having no conversational memory. History is now preserved.
+        # The system message at index 0 is updated each turn (see above) so
+        # there is no need to wipe the list.
+
         print(get_scratchpad_memory())
-        messages.clear()
         return parsed_response
-    
-    
+
     except requests.exceptions.ConnectionError:
         print("[ERROR] Could not connect to local LLM.")
-    
+
     except requests.exceptions.Timeout:
         print("[ERROR] Model took too long to respond.")
 
@@ -129,12 +172,6 @@ def ask_llm(query):
 
     except Exception as e:
         print(f"[ERROR] Unexpected error: {e}")
-
-    # Add assistant response
-
-    # Trim again after assistant response
-    # trim_context(messages)
-
 
 
 if __name__ == "__main__":
