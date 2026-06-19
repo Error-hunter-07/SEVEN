@@ -1,4 +1,5 @@
 import json
+from multiprocessing.dummy import connection
 from Database import db
 
 conn_pool = db.DB()
@@ -26,8 +27,7 @@ conn_pool = db.DB()
 # )
 
 
-def insert_working_memory(session_id, memory_type, key, value, priority=0.5,
-                          relevance=0.5, source=None, tags=None):
+def insert_working_memory(session_id, memory_type, key, value, priority=0.5,relevance=0.5, source=None, tags=None):
     connection = conn_pool.get_connection()
     if connection is None:
         print("[DB] insert_working_memory: Failed to get connection from pool.")
@@ -60,15 +60,17 @@ def insert_working_memory(session_id, memory_type, key, value, priority=0.5,
                     json.dumps(value),
                     priority,
                     relevance,
+                    None,
                     source,
                     tags
                 )
             )
-            new_id = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            new_id = row[0] if row else None
             connection.commit()
             return new_id
     except Exception as e:
-        print(f"[DB] insert_working_memory error: {e}")
+        print(f"[DB] insert_working_memory error: {type(e).__name__}: {e}")
         connection.rollback()
         return None
     finally:
@@ -101,9 +103,7 @@ def get_working_memory(session_id):
         conn_pool.put_connection(connection)
 
 
-def update_working_memory(memory_id, key=None, value=None, priority=None,
-                          relevance=None, expires_at=None, source=None,
-                          tags=None):
+def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None,tags=None):
     connection = conn_pool.get_connection()
     if connection is None:
         print("[DB] update_working_memory: Failed to get connection from pool.")

@@ -60,6 +60,29 @@ def _build_system_message() -> dict:
         "content": prompt_builder.build_prompt("")
     }
 
+def _build_tool_schema(parameters: dict) -> dict:
+    """Convert the flat {param_name: description} dict into a valid JSON Schema."""
+    if not parameters:
+        return {"type": "object", "properties": {}}
+    
+    properties = {}
+    for name, desc in parameters.items():
+        # Infer type hint from the description prefix
+        desc_str = str(desc)
+        if desc_str.startswith("bool"):
+            prop_type = "boolean"
+        elif desc_str.startswith("int"):
+            prop_type = "integer"
+        else:
+            prop_type = "string"
+        properties[name] = {"type": prop_type, "description": desc_str}
+    
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(parameters.keys())
+    }
+
 
 def request_completion(request_messages):
     response = requests.post(
@@ -73,7 +96,7 @@ def request_completion(request_messages):
                     "function": {
                         "name": tool.name,
                         "description": tool.description,
-                        "parameters": tool.parameters
+                        "parameters": _build_tool_schema(tool.parameters)
                     }
                 }
                 for tool in registry.list_tools()

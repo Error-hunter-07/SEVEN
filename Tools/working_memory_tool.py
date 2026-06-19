@@ -8,8 +8,7 @@ def _get_session_id():
     return process_manager.ProcessManager.get_instance().get_session_id()
 
 
-def insert_working_memory(memory_type, key, value, priority=0.5,
-                          relevance=0.5, source=None, tags=None):
+def insert_working_memory(memory_type, key, value, priority=0.5,relevance=0.5, source=None, tags=None):
     result = working_memory_db_client.insert_working_memory(
         _get_session_id(),
         memory_type,
@@ -49,9 +48,7 @@ def get_all_working_memory_current_session():
     return all_working_memory
 
 
-def update_working_memory(memory_id, key=None, value=None, priority=None,
-                          relevance=None, expires_at=None, source=None,
-                          tags=None):
+def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None,tags=None):
     working_memory_db_client.update_working_memory(
         memory_id,
         key,
@@ -65,6 +62,38 @@ def update_working_memory(memory_id, key=None, value=None, priority=None,
     scratchpad_tool.add_scratchpad_tool_output(
         "update_working_memory",
         f"Updated working memory with ID: {memory_id}"
+    )
+
+def add_scratchpad_memory_update_flat(memory_type, key=None, value=None,
+                                       priority=0.5, relevance=0.5,
+                                       source=None, tags=None,
+                                       memory_id=None, update=False):
+    if memory_type == "working_memory" and not update:
+        insert_working_memory(
+            memory_type=memory_type,
+            key=key,
+            value=value,
+            priority=priority,
+            relevance=relevance,
+            source=source,
+            tags=tags.split(",") if isinstance(tags, str) else tags
+        )
+    elif memory_type == "working_memory" and update:
+        update_working_memory(
+            memory_id=memory_id,
+            key=key,
+            value=value,
+            priority=priority,
+            relevance=relevance,
+            source=source,
+            tags=tags.split(",") if isinstance(tags, str) else tags
+        )
+
+    import MemoryManagement.shortterm_memory.scratchpad as scratchpad_module
+    scratchpad_module.scratchpad.add_memory_update(memory_type, str(value), update)
+    scratchpad_tool.add_scratchpad_tool_output(
+        "add_scratchpad_memory_update",
+        f"Memory {'update' if update else 'insert'} completed for type='{memory_type}' key='{key}'"
     )
 
 
@@ -81,7 +110,7 @@ def add_scratchpad_memory_update(memory_type, data, update=False):
 
     if memory_type == "working_memory" and not update:
         insert_working_memory(
-            memory_type=data_parsed.get("memory_type"),
+            memory_type=memory_type,
             key=data_parsed.get("key"),
             value=data_parsed.get("value"),
             priority=data_parsed.get("priority", 0.5),

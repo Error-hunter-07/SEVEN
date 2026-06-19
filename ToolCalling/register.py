@@ -70,20 +70,21 @@ registry.register(
     Tool(
         name="add_scratchpad_memory_update",
         description=(
-            "Inserts or updates a working memory entry via the scratchpad bridge. "
-            "Currently supports memory_type='working_memory' only. "
-            "Set update=False to insert a new record, update=True to update by memory_id."
+            "Inserts or updates a working memory entry. "
+            "Set update=False to insert, update=True to update by memory_id."
         ),
         parameters={
-            "memory_type": "str - memory category, currently only 'working_memory' is supported",
-            "data": (
-                "str - JSON-encoded object. "
-                "For insert (update=False): {memory_type, key, value, priority (0-1), relevance (0-1), source (optional), tags (optional list)}. "
-                "For update (update=True): {memory_id, key (optional), value (optional), priority (optional), relevance (optional), expires_at (optional), source (optional), tags (optional)}"
-            ),
-            "update": "bool - False to insert a new record, True to update an existing record by memory_id"
+            "memory_type": "str - always pass 'working_memory'",
+            "key": "str - the key name for this memory entry",
+            "value": "str - the content to store",
+            "priority": "float - 0.0 to 1.0, default 0.5",
+            "relevance": "float - 0.0 to 1.0, default 0.5",
+            "source": "str - optional, where this memory comes from",
+            "tags": "str - optional, comma-separated tags",
+            "memory_id": "str - only required when update=True",
+            "update": "bool - False to insert, True to update"
         },
-        func=working_memory_tool.add_scratchpad_memory_update
+        func=working_memory_tool.add_scratchpad_memory_update_flat
     )
 )
 
