@@ -6,6 +6,13 @@ def parse_response(message: str) -> str:
     Returns formatted string.
     """
 
+    message = re.sub(
+        r"<tool_call>.*?</tool_call>",
+        "",
+        message,
+        flags=re.DOTALL,
+    ).strip()
+
     # Bold: **text**
     message = re.sub(
         r"\*\*(.*?)\*\*",
