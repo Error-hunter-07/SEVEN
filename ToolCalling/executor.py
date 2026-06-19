@@ -18,8 +18,9 @@ def execute_tool_calls(text):
 
         if tool.parameters:
             normalized_args = {
-                name: arguments.get(name, "")
+                name: arguments.get(name)
                 for name in tool.parameters
+                if name in arguments
             }
             try:
                 tool.func(**normalized_args)
