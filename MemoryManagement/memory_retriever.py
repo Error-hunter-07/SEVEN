@@ -1,8 +1,46 @@
-# from .shortterm_memory import conversation_history as conversation
-from .shortterm_memory import scratchpad
+"""
+Compiles all memory sources into a single context string for the system prompt.
 
-def get_retrieved_context():
-    # return conversation.conversation_summary + "\n\n" + scratchpad.get_compiled_memory()
-    return scratchpad.get_compiled_memory()
+CHANGED: now accepts the current user query so semantic memory can do
+similarity search. prompt_builder.build_prompt() passes the query here.
 
-    
+Context assembly order (matters for prompt position):
+  1. Short-term (scratchpad) — always included, highest priority
+  2. Long-term semantic       — injected when query is provided
+"""
+
+from MemoryManagement.shortterm_memory import scratchpad
+from MemoryManagement.semantic_memory.semantic_memory import SemanticMemory
+
+_semantic_memory = SemanticMemory()
+
+
+def get_retrieved_context(query: str = "") -> str:
+    """
+    Build the full memory context string for the current turn.
+
+    Args:
+        query: The current user message. Used to do semantic similarity
+               search against long-term memory. Pass "" to skip semantic retrieval.
+
+    Returns:
+        A formatted string to inject into the system prompt.
+    """
+    parts = []
+
+    # 1. Short-term scratchpad (always included)
+    scratchpad_context = scratchpad.get_compiled_memory()
+    if scratchpad_context and scratchpad_context.strip():
+        parts.append(scratchpad_context)
+
+    # 2. Long-term semantic memory (only when we have a query to search with)
+    if query and query.strip():
+        semantic_context = _semantic_memory.retrieve_as_text(
+            query=query,
+            k=5,
+            min_importance=0.4,   # skip low-value memories to save tokens
+        )
+        if semantic_context:
+            parts.append(semantic_context)
+
+    return "\n\n".join(parts)

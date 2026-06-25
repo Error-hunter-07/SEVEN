@@ -1,0 +1,178 @@
+"""
+High-level semantic memory API.
+Everything above this layer (tools, retriever, extractor) uses this class.
+Everything below this layer (ChromaDB) is hidden inside Database/chroma_db.py.
+
+This class never imports chromadb directly — only VectorDBClient.
+"""
+
+from __future__ import annotations
+
+from Database.chroma_db import semantic_memory_db
+from VectorDBClient.VectorClient import VectorDBClient
+
+
+class SemanticMemory:
+
+    def __init__(self, db: VectorDBClient | None = None):
+        # Allow injecting a different backend (useful for tests)
+        self._db = db or semantic_memory_db
+
+    # ---------------------------------------------------------------- write
+
+    def store(
+        self,
+        text: str,
+        importance: float = 0.5,
+        category: str     = "other",
+        source: str       = "conversation",
+    ) -> str | None:
+        """
+        Distil and store a single memory fact.
+
+        Before inserting, checks for near-duplicates (cosine dist <= 0.08).
+        If one exists, bumps its access_count instead of creating a new entry.
+
+        Returns the memory id on success, None on failure.
+        """
+        if self._db is None:
+            print("[SemanticMemory] store: DB not available.")
+            return None
+
+        text = text.strip()
+        if not text:
+            return None
+
+        # Deduplication check
+        duplicate = self._db.find_duplicate(text, threshold=0.08)
+        if duplicate:
+            mem_id   = duplicate["id"]
+            old_meta = duplicate["metadata"]
+            self._db.update(
+                id=mem_id,
+                metadata={
+                    **old_meta,
+                    "access_count":  int(old_meta.get("access_count", 0)) + 1,
+                    "last_accessed": VectorDBClient.now_iso(),
+                    # Update importance if the new value is higher
+                    "importance": max(float(old_meta.get("importance", 0.5)), importance),
+                },
+            )
+            print(f"[SemanticMemory] Dedup hit — updated existing memory: {mem_id}")
+            return mem_id
+
+        # New memory
+        mem_id = VectorDBClient.new_id()
+        now    = VectorDBClient.now_iso()
+        success = self._db.add(
+            id=mem_id,
+            text=text,
+            metadata={
+                "importance":    importance,
+                "category":      category,
+                "source":        source,
+                "created_at":    now,
+                "last_accessed": now,
+                "access_count":  0,
+            },
+        )
+        if success:
+            print(f"[SemanticMemory] Stored: [{category}] {text[:80]}")
+            return mem_id
+        return None
+
+    def delete(self, memory_id: str) -> bool:
+        if self._db is None:
+            return False
+        return self._db.delete(memory_id)
+
+    # ---------------------------------------------------------------- read
+
+    def retrieve(
+        self,
+        query: str,
+        k: int             = 5,
+        min_importance: float | None = None,
+        category: str | None         = None,
+    ) -> list[dict]:
+        """
+        Return the k most relevant memories for `query`.
+
+        Args:
+            query:          The current user message or topic to search against.
+            k:              Max number of memories to return.
+            min_importance: Optional floor — only return memories with
+                            importance >= this value.
+            category:       Optional filter — only return memories in this category.
+
+        Returns:
+            List of dicts: [{id, text, metadata, score}, ...]
+            Sorted by relevance (lowest cosine distance first).
+        """
+        if self._db is None:
+            return []
+
+        where = self._build_where(min_importance, category)
+        results = self._db.search(query=query, k=k, where=where)
+
+        # Bump last_accessed + access_count for retrieved memories
+        for r in results:
+            meta = r["metadata"]
+            self._db.update(
+                id=r["id"],
+                metadata={
+                    **meta,
+                    "last_accessed": VectorDBClient.now_iso(),
+                    "access_count":  int(meta.get("access_count", 0)) + 1,
+                },
+            )
+
+        return results
+
+    def retrieve_as_text(
+        self,
+        query: str,
+        k: int                       = 5,
+        min_importance: float | None = None,
+        category: str | None         = None,
+    ) -> str:
+        """
+        Same as retrieve() but returns a formatted string ready to inject
+        into the system prompt (used by memory_retriever.py).
+        """
+        memories = self.retrieve(query=query, k=k, min_importance=min_importance, category=category)
+        if not memories:
+            return ""
+
+        lines = ["LONG-TERM MEMORY (semantic):"]
+        for i, m in enumerate(memories, 1):
+            meta     = m["metadata"]
+            category = meta.get("category", "")
+            imp      = meta.get("importance", "")
+            lines.append(f"  {i}. [{category}] {m['text']}  (importance: {imp})")
+        return "\n".join(lines)
+
+    def count(self) -> int:
+        if self._db is None:
+            return 0
+        return self._db.count()
+
+    # ---------------------------------------------------------------- internal
+
+    @staticmethod
+    def _build_where(
+        min_importance: float | None,
+        category: str | None,
+    ) -> dict | None:
+        """Build a ChromaDB `where` filter from optional constraints."""
+        filters = []
+        if min_importance is not None:
+            filters.append({"importance": {"$gte": min_importance}})
+        if category:
+            filters.append({"category": {"$eq": category}})
+
+        if len(filters) == 0:
+            return None
+        if len(filters) == 1:
+            return filters[0]
+        return {"$and": filters}

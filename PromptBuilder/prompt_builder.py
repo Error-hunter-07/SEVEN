@@ -1,37 +1,43 @@
+"""
+CHANGED: build_prompt() now passes `user_query` down to
+memory_retriever.get_retrieved_context() so semantic memory can do a
+similarity search against the current user message.
+
+Previously it passed "" always (query was unused).
+"""
+
 import MemoryManagement.memory_retriever as memory_retriever
 import GlobalHelpers.token_counter as token_counter
 
-SYSTEM_PROMPT = """ 
-         Your name is Seven (Female, 10 year old girl). You are a helpful and advanced AI assistant,
-         you are designed to help the user with a wide range of tasks, from answering dumb questions to answering nuclear physics level tough questions
-         Don't be too expressive and neither be too formal and concise, you will behave like the sweetspot between these two.
-         Though you have 10 year old personality, but you are mature and intelligent.
-         Make use of tools, whenever necessary. Always include a normal text answer outside any <tool_call> blocks. Never reply with only tool calls.
-         Tool calls must be valid JSON wrapped in <tool_call>...</tool_call> tags. Do not wrap tool calls in markdown fences.
+SYSTEM_PROMPT = SYSTEM_PROMPT = """
+You are Seven (Female), an advance AI assistant similar to Jarvis. You are designed to help the user with a wide range of tasks from answering easy questions to totally
+discovering new knowledge. You are highly skilled and you are very concise with you answers. You are very creative and you are very good at coming up with new ideas.
+You have many tools to help you with your tasks, it is important that you utilize them to the best of your ability. 
+Make sure to use your tools whevever possible. The tools will help you to retain your memory and remember things about the user.
 
-         Tool call format:
-         <tool_call>
-         {"tool":"tool_name","arguments":{...}}
-         </tool_call>
+TOOL CALL FORMAT:
+<tool_call>
+{"tool": "tool_name", "arguments": {"key": "value"}}
+</tool_call>
+"""
 
-         General example:
-         <tool_call>
-         {"tool":"add_scratchpad_subtask","arguments":{"subtask":"Draft API outline"}}
-         </tool_call>
 
-         
-        Rules:
-        - Use double quotes for all JSON keys and string values.
-        - If a tool has no arguments, pass an empty object {}.
-        - Include one <tool_call> block per tool call.
-        - If no tool is needed, do not output any <tool_call> block.
-    """
+def build_prompt(user_query: str) -> str:
+    # CHANGED: pass user_query so semantic memory can retrieve relevant facts
+    retrieved_context = memory_retriever.get_retrieved_context(query=user_query)
 
-def build_prompt(user_query):
-    retrieved_context = memory_retriever.get_retrieved_context()
-    if token_counter.count_tokens(SYSTEM_PROMPT + retrieved_context + user_query) > 125000:
-        retrieved_context = ""  # Clear context if it exceeds token limit
-        print("[INFO] Context cleared due to token limit.")
+    total_tokens = token_counter.count_tokens(SYSTEM_PROMPT + retrieved_context + user_query)
+
+    if total_tokens > 125000:
+        # CHANGED: instead of wiping all context, try dropping only semantic memory
+        # by re-fetching with no query (scratchpad only)
+        retrieved_context = memory_retriever.get_retrieved_context(query="")
+        print("[PromptBuilder] Token limit hit — dropped semantic memory from context.")
+
+        if token_counter.count_tokens(SYSTEM_PROMPT + retrieved_context + user_query) > 125000:
+            retrieved_context = ""
+            print("[PromptBuilder] Token limit hit — dropped all context.")
+
     if retrieved_context:
         return f"{SYSTEM_PROMPT}\n\n{retrieved_context}"
     return SYSTEM_PROMPT

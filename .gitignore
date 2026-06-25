@@ -1,3 +1,4 @@
 .env*
 llama_server.log*
 session.log*
+VectorStore*

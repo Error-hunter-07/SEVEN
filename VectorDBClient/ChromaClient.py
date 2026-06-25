@@ -1,0 +1,166 @@
+from __future__ import annotations
+import os
+import uuid
+from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import Any
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from VectorDBClient.VectorClient import VectorDBClient
+
+
+class ChromaClient(VectorDBClient):
+    """
+        pip install chromadb sentence-transformers
+    """
+
+
+    def __init__(
+        self,
+        collection_name: str = "semantic_memory",
+        persist_dir: str     = os.getenv("DEFAULT_PERSIST_DIR"),
+        embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL"),
+        distance_fn: str     = "cosine",
+    ):
+        try:
+            import chromadb
+            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+        except ImportError as e:
+            raise ImportError(
+                "Run:  pip install chromadb sentence-transformers"
+            ) from e
+
+        self._collection_name = collection_name
+        self._distance_fn     = distance_fn
+
+        self._embedding_fn = SentenceTransformerEmbeddingFunction(model_name=embedding_model)
+        self._client       = chromadb.PersistentClient(path=persist_dir)
+        self._collection   = self._client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=self._embedding_fn,
+            metadata={"hnsw:space": distance_fn},
+        )
+
+        print(f"[ChromaClient] '{collection_name}' ready — {self._collection.count()} memories")
+
+    # --------------- CRUD Operations ----------------------------------#
+
+    def add(self, id: str, text: str, metadata: dict[str, Any]) -> bool:
+        if not text or not text.strip():
+            print("[ChromaClient] add: empty text — skipped.")
+            return False
+        try:
+            self._collection.add(
+                ids=[id],
+                documents=[text],
+                metadatas=[self._sanitise(metadata)],
+            )
+            return True
+        except Exception as e:
+            print(f"[ChromaClient] add error: {e}")
+            return False
+
+    def search(self, query: str, k: int = 5, where: dict | None = None) -> list[dict]:
+        if not query or not query.strip():
+            return []
+        total = self._collection.count()
+        if total == 0:
+            return []
+        safe_k = min(k, total)
+        try:
+            kwargs: dict[str, Any] = {
+                "query_texts": [query],
+                "n_results":   safe_k,
+                "include":     ["documents", "metadatas", "distances"],
+            }
+            if where:
+                kwargs["where"] = where
+            raw = self._collection.query(**kwargs)
+            return [
+                {"id": i, "text": d, "metadata": m, "score": round(s, 6)}
+                for i, d, m, s in zip(
+                    raw["ids"][0],
+                    raw["documents"][0],
+                    raw["metadatas"][0],
+                    raw["distances"][0],
+                )
+            ]
+        except Exception as e:
+            print(f"[ChromaClient] search error: {e}")
+            return []
+
+    def get(self, id: str) -> dict | None:
+        try:
+            raw = self._collection.get(ids=[id], include=["documents", "metadatas"])
+            if not raw["ids"]:
+                return None
+            return {
+                "id":       raw["ids"][0],
+                "text":     raw["documents"][0],
+                "metadata": raw["metadatas"][0],
+            }
+        except Exception as e:
+            print(f"[ChromaClient] get error: {e}")
+            return None
+
+    def update(self, id: str, text: str | None = None, metadata: dict | None = None) -> bool:
+        existing = self.get(id)
+        if existing is None:
+            print(f"[ChromaClient] update: id '{id}' not found.")
+            return False
+        new_text     = (text or existing["text"]).strip()
+        merged_meta  = {**existing["metadata"], **(metadata or {})}
+        try:
+            self._collection.update(
+                ids=[id],
+                documents=[new_text],
+                metadatas=[self._sanitise(merged_meta)],
+            )
+            return True
+        except Exception as e:
+            print(f"[ChromaClient] update error: {e}")
+            return False
+
+    def delete(self, id: str) -> bool:
+        try:
+            self._collection.delete(ids=[id])
+            return True
+        except Exception as e:
+            print(f"[ChromaClient] delete error: {e}")
+            return False
+
+    def count(self) -> int:
+        try:
+            return self._collection.count()
+        except Exception:
+            return 0
+
+    # ------------------- helpers functions ----------------------------#
+
+    def find_duplicate(self, text: str, threshold: float = 0.08) -> dict | None:
+        """
+            Returns the closest existing memory if cosine distance <= threshold.
+            Call this before add() to avoid storing near-duplicate facts.
+            threshold=0.08  ≈ 92%+ similarity.
+        """
+        if self._collection.count() == 0:
+            return None
+        results = self.search(text, k=1)
+        if results and results[0]["score"] <= threshold:
+            return results[0]
+        return None
+
+    @staticmethod
+    def _sanitise(metadata: dict[str, Any]) -> dict[str, Any]:
+        """ChromaDB only accepts str | int | float | bool. Convert everything else."""
+        out = {}
+        for k, v in metadata.items():
+            if isinstance(v, (str, int, float, bool)):
+                out[k] = v
+            elif v is None:
+                out[k] = ""
+            else:
+                out[k] = str(v)
+        return out

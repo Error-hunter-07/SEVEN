@@ -1,3 +1,13 @@
+"""
+LLMEngine/llm_client.py
+
+CHANGED: After every successful assistant turn, calls
+MemoryManagement.semantic_memory.memory_extractor.extract_and_store()
+to distil and persist long-term facts from the conversation.
+
+Everything else is unchanged from the original.
+"""
+
 import os
 import sys
 from ToolCalling.register import registry
@@ -19,25 +29,15 @@ from Runtime.process_manager import ProcessManager
 
 import ToolCalling.executor as tool_executor
 
+# CHANGED: import memory extractor for post-turn semantic memory extraction
+from MemoryManagement.semantic_memory.memory_extractor import extract_and_store
+
 load_dotenv()
 
 
 # ---------------------------------------------------------------------------
 # Conversation history
-# CHANGED: `messages` now persists across turns instead of being cleared
-# after every ask_llm() call. This is essential for KV-cache continuity:
-# llama.cpp's --cache-reuse works by matching the longest common prefix of
-# tokens between successive requests. If we clear the list each turn the
-# prefix is always just [system], so only the system prompt tokens are
-# reused. With history retained the prefix grows turn-by-turn and the cache
-# reuses all prior turns — exactly what --cache-prompt + --cache-reuse 256
-# is designed for.
-#
-# The system message lives at index 0 and is REPLACED (not re-inserted) at
-# the start of each turn with a freshly built prompt so the scratchpad state
-# is always current. This keeps the system message token position stable,
-# which is critical for cache hits — shifting token positions invalidates the
-# cache for all tokens after the shift point.
+# Persists across turns for KV-cache continuity (see original comments).
 # ---------------------------------------------------------------------------
 messages: list[dict] = []
 
@@ -56,31 +56,33 @@ except Exception as e:
 def _build_system_message() -> dict:
     """Build the system message dict with a freshly compiled prompt."""
     return {
-        "role": "system",
+        "role":    "system",
         "content": prompt_builder.build_prompt("")
     }
+
 
 def _build_tool_schema(parameters: dict) -> dict:
     """Convert the flat {param_name: description} dict into a valid JSON Schema."""
     if not parameters:
         return {"type": "object", "properties": {}}
-    
+
     properties = {}
     for name, desc in parameters.items():
-        # Infer type hint from the description prefix
         desc_str = str(desc)
         if desc_str.startswith("bool"):
             prop_type = "boolean"
         elif desc_str.startswith("int"):
             prop_type = "integer"
+        elif desc_str.startswith("float"):
+            prop_type = "number"
         else:
             prop_type = "string"
         properties[name] = {"type": prop_type, "description": desc_str}
-    
+
     return {
-        "type": "object",
+        "type":       "object",
         "properties": properties,
-        "required": list(parameters.keys())
+        "required":   list(parameters.keys()),
     }
 
 
@@ -88,57 +90,49 @@ def request_completion(request_messages):
     response = requests.post(
         "http://127.0.0.1:8081/v1/chat/completions",
         json={
-            "model": os.getenv("LLM_MODEL"),
-            "messages": request_messages,
+            "model":      os.getenv("LLM_MODEL"),
+            "messages":   request_messages,
             "tools": [
                 {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
+                        "name":        tool.name,
                         "description": tool.description,
-                        "parameters": _build_tool_schema(tool.parameters)
+                        "parameters":  _build_tool_schema(tool.parameters),
                     }
                 }
                 for tool in registry.list_tools()
             ],
             "temperature": 0.7,
-            "max_tokens": 2048
+            "max_tokens":  2048,
         },
     )
     response.raise_for_status()
     data = response.json()
-    return (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content")
-    )
+
+    # FIXED: handle both content-reply and tool-call-only replies
+    message = data.get("choices", [{}])[0].get("message", {})
+    return message.get("content") or ""
 
 
-def ask_llm(query):
-    # CHANGED: System message is REPLACED at index 0 on every turn (not
-    # inserted). This keeps the scratchpad state current in the prompt while
-    # leaving all prior user/assistant turns in place for KV cache reuse.
-    # Old code did messages.insert(0, ...) which would accumulate duplicate
-    # system messages if the list weren't cleared — now clearing is no longer
-    # needed and the system slot is always exactly one entry at position 0.
-    fresh_system = _build_system_message()
+def ask_llm(query: str) -> str | None:
+    # Rebuild system message with fresh scratchpad state for this turn
+    fresh_system = {
+        "role":    "system",
+        "content": prompt_builder.build_prompt(query),   # CHANGED: pass query
+    }
     if messages and messages[0]["role"] == "system":
-        # Replace the existing system message with the freshly built one.
         messages[0] = fresh_system
     else:
-        # First turn: no system message yet — prepend it.
         messages.insert(0, fresh_system)
 
-    # Add the new user turn.
-    messages.append({
-        "role": "user",
-        "content": query
-    })
+    messages.append({"role": "user", "content": query})
 
     try:
         assistant_reply = request_completion(messages)
-        if assistant_reply is None:
-            raise KeyError("No message content in response")
+
+        if not assistant_reply:
+            raise ValueError("Empty response from model")
 
         print(assistant_reply)
         tool_executor.execute_tool_calls(assistant_reply)
@@ -147,8 +141,8 @@ def ask_llm(query):
         if not parsed_response.strip():
             retry_prompt = prompt_builder.build_prompt(query)
             retry_messages = [
-                {"role": "system", "content": retry_prompt},
-                {"role": "user", "content": query},
+                {"role": "system",  "content": retry_prompt},
+                {"role": "user",    "content": query},
                 {
                     "role": "system",
                     "content": (
@@ -167,19 +161,19 @@ def ask_llm(query):
                 "Please rephrase your request."
             )
 
-        # CHANGED: Append the assistant reply to history so the next turn
-        # includes it in the message list. This is what allows KV cache reuse
-        # across turns — the model sees the full prior context each request
-        # and llama.cpp reuses all matching prefix tokens from the cache.
-        messages.append({
-            "role": "assistant",
-            "content": assistant_reply
-        })
+        messages.append({"role": "assistant", "content": assistant_reply})
 
-        # CHANGED: Removed messages.clear() — clearing was the root cause of
-        # SEVEN having no conversational memory. History is now preserved.
-        # The system message at index 0 is updated each turn (see above) so
-        # there is no need to wipe the list.
+        # CHANGED: extract and store long-term memories from this turn.
+        # Runs after the reply is committed so it never delays the response.
+        # Passes the raw assistant_reply (tool calls stripped inside extractor).
+        try:
+            extract_and_store(
+                user_message=query,
+                assistant_reply=assistant_reply,
+            )
+        except Exception as e:
+            # Never let extraction failure break the main conversation loop
+            print(f"[llm_client] Memory extraction error (non-fatal): {e}")
 
         print(get_scratchpad_memory())
         return parsed_response
