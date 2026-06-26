@@ -53,13 +53,37 @@ except Exception as e:
     print(f"[ERROR] Failed to start LLM process: {e}")
 
 
-def _build_system_message() -> dict:
-    """Build the system message dict with a freshly compiled prompt."""
-    return {
-        "role":    "system",
-        "content": prompt_builder.build_prompt("")
-    }
+# def _build_system_message() -> dict:
+#     """Build the system message dict with a freshly compiled prompt."""
+#     return {
+#         "role":    "system",
+#         "content": prompt_builder.build_prompt("")
+#     }
 
+
+#── BUG FIX 1: max_tokens was 2048 which consumed more space than ──────────
+# the model had left after input tokens, causing empty responses.
+# Set to 1024 — enough for any normal reply, leaves room for input.
+
+MAX_RESPONSE_TOKENS = 1024
+ 
+# ── BUG FIX 2: conversation history grew unbounded every turn. ─────────────
+# After ~4 turns the history alone overflowed the context window.
+# Keep only the last N user/assistant pairs. System message is always kept.
+
+MAX_HISTORY_TURNS = 4
+
+ 
+def _trim_history(msgs: list[dict]) -> list[dict]:
+    """
+    Keep system message + last MAX_HISTORY_TURNS of user/assistant pairs.
+    Never mutates the original list.
+    """
+    system = [m for m in msgs if m["role"] == "system"]
+    conversation = [m for m in msgs if m["role"] != "system"]
+    trimmed = conversation[-(MAX_HISTORY_TURNS * 2):]
+    return system + trimmed
+ 
 
 def _build_tool_schema(parameters: dict) -> dict:
     """Convert the flat {param_name: description} dict into a valid JSON Schema."""
@@ -104,8 +128,9 @@ def request_completion(request_messages):
                 for tool in registry.list_tools()
             ],
             "temperature": 0.7,
-            "max_tokens":  2048,
+            "max_tokens":  MAX_RESPONSE_TOKENS, #Fixed this from 2048 to 1024
         },
+        timeout=120
     )
     response.raise_for_status()
     data = response.json()
@@ -129,27 +154,39 @@ def ask_llm(query: str) -> str | None:
     messages.append({"role": "user", "content": query})
 
     try:
-        assistant_reply = request_completion(messages)
 
-        if not assistant_reply:
-            raise ValueError("Empty response from model")
+        # FIX 2: trim history before sending prevents unbounded context growth
+        trimmed = _trim_history(messages)
+
+        assistant_reply = request_completion(trimmed)
+
+        # FIX 3: treat empty response as a recoverable situation, not an exception.
+        # Print a clear diagnostic instead of raising ValueError which was
+        # caught by the generic except and printed as "Unexpected error".
+        if not assistant_reply or not assistant_reply.strip():
+            print(
+                "[llm_client] Empty response from model.\n"
+                "  Likely cause: context window overflow or model busy.\n"
+                "  Input tokens were too close to the model's context limit.\n"
+                "  Try a shorter message, or check that llama-server --ctx-size "
+                "is at least 8192."
+            )
+            return (
+                "I couldn't generate a response — my context window is probably too full. "
+                "Try splitting your message into smaller parts."
+            )
 
         print(assistant_reply)
         tool_executor.execute_tool_calls(assistant_reply)
         parsed_response = parse_response(assistant_reply)
 
         if not parsed_response.strip():
-            retry_prompt = prompt_builder.build_prompt(query)
+            # Retry without tools — model replied with only tool calls, no text
             retry_messages = [
-                {"role": "system",  "content": retry_prompt},
-                {"role": "user",    "content": query},
-                {
-                    "role": "system",
-                    "content": (
-                        "Return a normal text answer. "
-                        "Do not include any <tool_call> blocks."
-                    )
-                },
+                {"role": "system", "content": prompt_builder.build_prompt(query)},
+                {"role": "user", "content": query},
+                {"role": "assistant", "content": assistant_reply},
+                {"role": "user", "content": "Now give me a normal text reply without any tool calls."},
             ]
             retry_reply = request_completion(retry_messages)
             if retry_reply:
@@ -163,32 +200,56 @@ def ask_llm(query: str) -> str | None:
 
         messages.append({"role": "assistant", "content": assistant_reply})
 
-        # CHANGED: extract and store long-term memories from this turn.
-        # Runs after the reply is committed so it never delays the response.
-        # Passes the raw assistant_reply (tool calls stripped inside extractor).
-        try:
-            extract_and_store(
-                user_message=query,
-                assistant_reply=assistant_reply,
-            )
-        except Exception as e:
-            # Never let extraction failure break the main conversation loop
-            print(f"[llm_client] Memory extraction error (non-fatal): {e}")
+        # FIX 4: memory extraction was running on EVERY turn using the same
+        # model port, adding ~1000 tokens of extra load immediately after the
+        # main call. If the main call already stressed the context, this second
+        # call would also fail or slow down the loop significantly.
+        # Now runs only when the reply contains real user-relevant content
+        # (skip greetings, tool-only replies, and error messages).
 
+        # Later change this to a seperate LLM to get relevant infromation, so that we can 
+        # avoid excessive load and preserve the context window
+        _maybe_extract_memory(query, assistant_reply)
+ 
         print(get_scratchpad_memory())
         return parsed_response
 
     except requests.exceptions.ConnectionError:
-        print("[ERROR] Could not connect to local LLM.")
+        print("[ERROR] Could not connect to local LLM server at :8081.")
 
     except requests.exceptions.Timeout:
-        print("[ERROR] Model took too long to respond.")
+        print("[ERROR] Model timed out. It may be overloaded or the context is too large.")
 
     except requests.exceptions.RequestException as e:
         print(f"[ERROR] Request failed: {e}")
 
     except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}")
+        print(f"[ERROR] Unexpected error: {type(e).__name__}: {e}")
+
+def _maybe_extract_memory(user_message: str, assistant_reply: str) -> None:
+    """
+    FIX 4: Only run memory extraction when there's a real chance of
+    extractable facts. Skip short/greeting turns to reduce model load.
+    Extraction failure is always non-fatal.
+    """
+    # Skip if the user message is too short to contain extractable facts
+    if len(user_message.split()) < 8:
+        return
+ 
+    # Skip if assistant reply is mostly tool calls with no real content
+    stripped = assistant_reply
+    import re
+    stripped = re.sub(r"<tool_call>.*?</tool_call>", "", stripped, flags=re.DOTALL).strip()
+    if len(stripped.split()) < 5:
+        return
+ 
+    try:
+        extract_and_store(
+            user_message=user_message,
+            assistant_reply=assistant_reply,
+        )
+    except Exception as e:
+        print(f"[llm_client] Memory extraction error (non-fatal): {e}")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ Previously it passed "" always (query was unused).
 import MemoryManagement.memory_retriever as memory_retriever
 import GlobalHelpers.token_counter as token_counter
 
+LOCAL_CTX_LIMIT = 12000
+
 SYSTEM_PROMPT = SYSTEM_PROMPT = """
 You are Seven (Female), an advance AI assistant similar to Jarvis. You are designed to help the user with a wide range of tasks from answering easy questions to totally
 discovering new knowledge. You are highly skilled and you are very concise with you answers. You are very creative and you are very good at coming up with new ideas.
@@ -19,25 +21,40 @@ TOOL CALL FORMAT:
 <tool_call>
 {"tool": "tool_name", "arguments": {"key": "value"}}
 </tool_call>
+
+WHEN TO USE TOOLS:
+- Any task/request → update_scratchpad_state planning.current_goal
+- Multi-step task → update_scratchpad_state planning.subtasks
+- User shares personal info (name, skills, project, preferences) → add_scratchpad_memory_update AND store_semantic_memory
+- Long-term fact about user → store_semantic_memory (importance 0.4-1.0)
+- User asks about past sessions → search_semantic_memory
+- Task complete / topic done → update_scratchpad_summary
+- Error or failure → update_scratchpad_state execution.last_error
+- Never answer in only tool calls, you must provide a natural language response as well.
+
+STYLE: concise, calm, no filler phrases like "Certainly!" or "Great question!".
 """
 
 
 def build_prompt(user_query: str) -> str:
-    # CHANGED: pass user_query so semantic memory can retrieve relevant facts
     retrieved_context = memory_retriever.get_retrieved_context(query=user_query)
 
-    total_tokens = token_counter.count_tokens(SYSTEM_PROMPT + retrieved_context + user_query)
+    total = token_counter.count_tokens( 
+        SYSTEM_PROMPT + retrieved_context + user_query
+    )
 
-    if total_tokens > 125000:
-        # CHANGED: instead of wiping all context, try dropping only semantic memory
-        # by re-fetching with no query (scratchpad only)
+    if total > LOCAL_CTX_LIMIT:
         retrieved_context = memory_retriever.get_retrieved_context(query="")
-        print("[PromptBuilder] Token limit hit — dropped semantic memory from context.")
+        total = token_counter.count_tokens(
+            SYSTEM_PROMPT + retrieved_context + user_query
+        )
+        print(f"[PromptBuilder] Over limit ({total} tokens) — dropped semantic memory.")
 
-        if token_counter.count_tokens(SYSTEM_PROMPT + retrieved_context + user_query) > 125000:
-            retrieved_context = ""
-            print("[PromptBuilder] Token limit hit — dropped all context.")
+    if total > LOCAL_CTX_LIMIT:
+        retrieved_context = ""
+        print(f"[PromptBuilder] Still over limit — dropped all context.")
 
-    if retrieved_context:
+    if retrieved_context and retrieved_context.strip():
         return f"{SYSTEM_PROMPT}\n\n{retrieved_context}"
+
     return SYSTEM_PROMPT

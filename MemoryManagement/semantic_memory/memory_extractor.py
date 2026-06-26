@@ -13,9 +13,7 @@ import json
 import os
 import requests
 
-from MemoryManagement.semantic_memory.semantic_memory import SemanticMemory
-
-semantic_memory = SemanticMemory()
+from MemoryManagement.semantic_memory.semantic_memory import semantic_memory  # FIX 2: singleton
 
 # ── Extraction prompt ────────────────────────────────────────────────────────
 

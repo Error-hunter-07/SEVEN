@@ -10,9 +10,9 @@ Context assembly order (matters for prompt position):
 """
 
 from MemoryManagement.shortterm_memory import scratchpad
-from MemoryManagement.semantic_memory.semantic_memory import SemanticMemory
 
-_semantic_memory = SemanticMemory()
+# FIX 2: import the singleton, don't create a new instance
+from MemoryManagement.semantic_memory.semantic_memory import semantic_memory
 
 
 def get_retrieved_context(query: str = "") -> str:
@@ -35,7 +35,7 @@ def get_retrieved_context(query: str = "") -> str:
 
     # 2. Long-term semantic memory (only when we have a query to search with)
     if query and query.strip():
-        semantic_context = _semantic_memory.retrieve_as_text(
+        semantic_context = semantic_memory.retrieve_as_text(
             query=query,
             k=5,
             min_importance=0.4,   # skip low-value memories to save tokens

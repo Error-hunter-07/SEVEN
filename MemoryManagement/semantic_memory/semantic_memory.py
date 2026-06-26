@@ -94,6 +94,7 @@ class SemanticMemory:
         k: int             = 5,
         min_importance: float | None = None,
         category: str | None         = None,
+        update_access: bool = False,   # FIX 1: default False — don't write on reads
     ) -> list[dict]:
         """
         Return the k most relevant memories for `query`.
@@ -115,18 +116,22 @@ class SemanticMemory:
         where = self._build_where(min_importance, category)
         results = self._db.search(query=query, k=k, where=where)
 
-        # Bump last_accessed + access_count for retrieved memories
-        for r in results:
-            meta = r["metadata"]
-            self._db.update(
-                id=r["id"],
-                metadata={
-                    **meta,
-                    "last_accessed": VectorDBClient.now_iso(),
-                    "access_count":  int(meta.get("access_count", 0)) + 1,
-                },
-            )
-
+        # FIX 1: Only update access metadata when explicitly requested.
+        # Previously this fired on EVERY turn (5 writes per prompt build)
+        # which was blocking the main thread and causing empty responses.
+        # Now only called when the LLM explicitly searches via tool call.
+        if update_access:
+            for r in results:
+                meta = r["metadata"]
+                self._db.update(
+                    id=r["id"],
+                    metadata={
+                        **meta,
+                        "last_accessed": VectorDBClient.now_iso(),
+                        "access_count": int(meta.get("access_count", 0)) + 1,
+                    },
+                )
+ 
         return results
 
     def retrieve_as_text(
@@ -140,16 +145,16 @@ class SemanticMemory:
         Same as retrieve() but returns a formatted string ready to inject
         into the system prompt (used by memory_retriever.py).
         """
-        memories = self.retrieve(query=query, k=k, min_importance=min_importance, category=category)
+        memories = self.retrieve(query=query, k=k, min_importance=min_importance, category=category, update_access=False)   # never write during prompt building
         if not memories:
             return ""
 
         lines = ["LONG-TERM MEMORY (semantic):"]
         for i, m in enumerate(memories, 1):
             meta     = m["metadata"]
-            category = meta.get("category", "")
+            mem_category = meta.get("category", "")      # FIX 3: renamed to avoid shadowing parameter
             imp      = meta.get("importance", "")
-            lines.append(f"  {i}. [{category}] {m['text']}  (importance: {imp})")
+            lines.append(f"  {i}. [{mem_category}] {m['text']}  (importance: {imp})")
         return "\n".join(lines)
 
     def count(self) -> int:
@@ -176,3 +181,9 @@ class SemanticMemory:
         if len(filters) == 1:
             return filters[0]
         return {"$and": filters}
+
+
+# FIX 2: Module-level singleton — all three files (memory_retriever,
+# semantic_memory_tool, memory_extractor) import THIS instead of calling
+# SemanticMemory() themselves. One instance, one ChromaDB connection.
+semantic_memory = SemanticMemory()

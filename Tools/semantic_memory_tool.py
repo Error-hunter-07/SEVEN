@@ -10,10 +10,9 @@ Two tools are exposed to the LLM:
   2. search_semantic_memory — search past memories by topic
 """
 
-from MemoryManagement.semantic_memory.semantic_memory import SemanticMemory
+from MemoryManagement.semantic_memory.semantic_memory import semantic_memory  # FIX 2: singleton
 import Tools.scratchpad_tool as scratchpad_tool
 
-_semantic_memory = SemanticMemory()
 
 
 def store_semantic_memory(
@@ -33,7 +32,7 @@ def store_semantic_memory(
     Returns:
         The new memory id on success, None on failure.
     """
-    mem_id = _semantic_memory.store(
+    mem_id = semantic_memory.store(
         text=text,
         importance=importance,
         category=category,
@@ -55,7 +54,10 @@ def search_semantic_memory(query: str, k: int = 5) -> str:
     The LLM can call this before answering questions about the user's
     background, preferences, or past experiences.
     """
-    results = _semantic_memory.retrieve(query=query, k=k)
+
+    # FIX 1: pass update_access=True here — this is an explicit LLM search,
+    # so bumping access_count is appropriate and intentional.
+    results = semantic_memory.retrieve(query=query, k=k, update_access=True)
 
     if not results:
         output = "No relevant long-term memories found."
