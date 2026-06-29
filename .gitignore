@@ -2,3 +2,9 @@
 llama_server.log*
 session.log*
 VectorStore*
+
+**/__pycache__/
+*.py[cod]
+
+# Sentence transformer model cache
+.cache/
