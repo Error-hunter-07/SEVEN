@@ -1,3 +1,4 @@
+import requests as _requests
 import subprocess
 import time
 from typing import Optional, TextIO
@@ -95,7 +96,7 @@ class ProcessManager:
 
             "--ctx-checkpoints", "64",
 
-            "--parallel", "4",
+            "--parallel", "1", # changed to one to preserve KV cache VRAM
 
             "--cont-batching",
 
@@ -163,9 +164,60 @@ class ProcessManager:
 
     # HIGH LEVEL API
 
+    def wait_until_ready(self, timeout: int = 120) -> bool:
+        """
+        FIX 4: Poll llama-server with a real generation request, not just /health.
+        /health returns 200 as soon as the HTTP server binds — but the model
+        weights may still be loading into VRAM. A generation probe confirms
+        the model can actually produce output before we show the You: prompt.
+        """
+        import requests as _req
+ 
+        print("[PROCESS] Waiting for model to load", end="", flush=True)
+        deadline = time.time() + timeout
+ 
+        # Phase 1: wait for HTTP server to bind (fast, ~1-2s)
+        while time.time() < deadline:
+            try:
+                _req.get("http://127.0.0.1:8081/health", timeout=1)
+                break
+            except Exception:
+                print(".", end="", flush=True)
+                time.sleep(1)
+ 
+        # Phase 2: wait for model to actually be ready for generation
+        # Send a minimal probe request — if it returns any content, model is ready
+        while time.time() < deadline:
+            try:
+                r = _req.post(
+                    "http://127.0.0.1:8081/v1/chat/completions",
+                    json={
+                        "model": "local",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 5,        # tiny — just enough to confirm generation works
+                        "temperature": 0.0,
+                    },
+                    timeout=30,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if content:                 # got actual generated text → model ready
+                        print(" ready.")
+                        return True
+            except Exception:
+                pass
+            print(".", end="", flush=True)
+            time.sleep(2)
+ 
+        print(" timed out — proceeding anyway.")
+        return False
+
     def start_for_client(self) -> None:
         self.start()
+        self.wait_until_ready(timeout=120)  
 
+    
     def stop_from_cli(self) -> None:
         self.stop()
 
