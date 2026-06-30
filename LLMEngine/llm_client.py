@@ -339,8 +339,26 @@ def ask_llm(query: str) -> str | None:
             parsed_response = "Done."
  
         messages.append(history_message)
+ # ==========================================================
+        # FIX:
+        # Build a summary of any native tool calls so memory extraction
+        # still has assistant context even when text == "".
+        # ==========================================================
+        tool_summary = ""
+        if native_calls:
+            parts = [
+                f"[Called {tc['function']['name']}]"
+                for tc in native_calls
+            ]
+            tool_summary = " ".join(parts)
+
+        full_assistant_activity = f"{text} {tool_summary}".strip()
+
+        _maybe_extract_memory(query, full_assistant_activity)
+        # ==========================================================
+
  
-        _maybe_extract_memory(query, text)
+        # _maybe_extract_memory(query, text)
  
         print(get_scratchpad_memory())
         return parsed_response
