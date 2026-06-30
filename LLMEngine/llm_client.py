@@ -375,28 +375,14 @@ def ask_llm(query: str) -> str | None:
 
 
 
-def _maybe_extract_memory(user_message: str, assistant_reply: str) -> None:
-    """
-    FIX 4: Only run memory extraction when there's a real chance of
-    extractable facts. Skip short/greeting turns to reduce model load.
-    Extraction failure is always non-fatal.
-    """
-    # Skip if the user message is too short to contain extractable facts
+def _maybe_extract_memory(user_message: str, assistant_activity: str) -> None:
+    # Guard on USER message length, not assistant reply
     if len(user_message.split()) < 8:
         return
- 
-    # Skip if assistant reply is mostly tool calls with no real content
-    stripped = assistant_reply
-    import re
-    stripped = re.sub(r"<tool_call>.*?</tool_call>", "", stripped, flags=re.DOTALL).strip()
-    if len(stripped.split()) < 5:
-        return
- 
+    # No need to check assistant_activity length anymore —
+    # we always have something now (either text or tool summary)
     try:
-        extract_and_store(
-            user_message=user_message,
-            assistant_reply=assistant_reply,
-        )
+        extract_and_store(user_message=user_message, assistant_reply=assistant_activity)
     except Exception as e:
         print(f"[llm_client] Memory extraction error (non-fatal): {e}")
 
