@@ -11,12 +11,14 @@ from __future__ import annotations
 from Database.chroma_db import semantic_memory_db
 from VectorDBClient.VectorClient import VectorDBClient
 
+from MemoryManagement.semantic_memory import memory_lifecycle
 
 class SemanticMemory:
 
     def __init__(self, db: VectorDBClient | None = None):
         # Allow injecting a different backend (useful for tests)
         self._db = db or semantic_memory_db
+        memory_lifecycle.start(self._db)
 
     # ---------------------------------------------------------------- write
 
@@ -43,11 +45,18 @@ class SemanticMemory:
         if not text:
             return None
 
+        # overflow guard on every store
+
+        if self._db.count() > memory_lifecycle.MAX_MEMORIES:
+            memory_lifecycle._prune(self._db)  
+
+            
         # Deduplication check
-        duplicate = self._db.find_duplicate(text, threshold=0.08)
-        if duplicate:
-            mem_id   = duplicate["id"]
-            old_meta = duplicate["metadata"]
+        # Stage 1: near-identical (current threshold) → update access count only
+        near_duplicate = self._db.find_duplicate(text, threshold=0.08)
+        if near_duplicate:
+            mem_id   = near_duplicate["id"]
+            old_meta = near_duplicate["metadata"]
             self._db.update(
                 id=mem_id,
                 metadata={
@@ -60,6 +69,29 @@ class SemanticMemory:
             )
             print(f"[SemanticMemory] Dedup hit — updated existing memory: {mem_id}")
             return mem_id
+        
+        
+        # Stage 2: paraphrase range (0.08–0.35) → only merge if SAME category
+        paraphrase_dup = self._db.find_duplicate(text, threshold=0.35)
+        if paraphrase_dup:
+            same_category = paraphrase_dup["metadata"].get("category") == category
+            if same_category:
+                # Keep the higher-importance version's text, merge metadata
+                old_importance = float(paraphrase_dup["metadata"].get("importance", 0.5))
+                if importance > old_importance:
+                    # New version is more important — replace text, keep id
+                    self._db.update(
+                        id=paraphrase_dup["id"],
+                        text=text,  # upgrade to better phrasing
+                        metadata={**paraphrase_dup["metadata"], "importance": importance}
+                    )
+                else:
+                    # Old version stays, just bump count
+                    self._db.update(id=paraphrase_dup["id"], metadata={
+                        **paraphrase_dup["metadata"],
+                        "access_count": int(paraphrase_dup["metadata"].get("access_count", 0)) + 1
+                    })
+                return paraphrase_dup["id"]
 
         # New memory
         mem_id = VectorDBClient.new_id()
@@ -146,6 +178,10 @@ class SemanticMemory:
         into the system prompt (used by memory_retriever.py).
         """
         memories = self.retrieve(query=query, k=k, min_importance=min_importance, category=category, update_access=False)   # never write during prompt building
+
+        RELEVANCE_THRESHOLD = 0.5
+        
+        memories = [m for m in memories if m["score"] <= RELEVANCE_THRESHOLD]
         if not memories:
             return ""
 
