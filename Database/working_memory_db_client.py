@@ -1,6 +1,9 @@
 import json
 from multiprocessing.dummy import connection
 from Database import db
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 conn_pool = db.DB()
 
@@ -30,7 +33,7 @@ conn_pool = db.DB()
 def insert_working_memory(session_id, memory_type, key, value, priority=0.5,relevance=0.5, source=None, tags=None):
     connection = conn_pool.get_connection()
     if connection is None:
-        print("[DB] insert_working_memory: Failed to get connection from pool.")
+        log.warning("insert_working_memory: Failed to get connection from pool.")
         return None
 
     try:
@@ -70,7 +73,7 @@ def insert_working_memory(session_id, memory_type, key, value, priority=0.5,rele
             connection.commit()
             return new_id
     except Exception as e:
-        print(f"[DB] insert_working_memory error: {type(e).__name__}: {e}")
+        log.error("insert_working_memory error: %s: %s", type(e).__name__, e, exc_info=True)
         connection.rollback()
         return None
     finally:
@@ -80,7 +83,7 @@ def insert_working_memory(session_id, memory_type, key, value, priority=0.5,rele
 def get_working_memory(session_id):
     connection = conn_pool.get_connection()
     if connection is None:
-        print("[DB] get_working_memory: Failed to get connection from pool.")
+        log.warning("get_working_memory: Failed to get connection from pool.")
         return None
 
     try:
@@ -97,7 +100,7 @@ def get_working_memory(session_id):
             results = cursor.fetchall()
             return results
     except Exception as e:
-        print(f"[DB] get_working_memory error: {e}")
+        log.error("get_working_memory error: %s", e, exc_info=True)
         return None
     finally:
         conn_pool.put_connection(connection)
@@ -106,7 +109,7 @@ def get_working_memory(session_id):
 def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None,tags=None):
     connection = conn_pool.get_connection()
     if connection is None:
-        print("[DB] update_working_memory: Failed to get connection from pool.")
+        log.warning("update_working_memory: Failed to get connection from pool.")
         return False
 
     try:
@@ -137,7 +140,7 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
                 update_values.append(tags)
 
             if not update_fields:
-                print("[DB] update_working_memory: No fields to update.")
+                log.warning("update_working_memory: No fields to update.")
                 return False
 
             update_query = f"""
@@ -149,7 +152,7 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
             connection.commit()
             return True
     except Exception as e:
-        print(f"[DB] update_working_memory error: {e}")
+        log.error("update_working_memory error: %s", e, exc_info=True)
         connection.rollback()
         return False
     finally:
@@ -159,7 +162,7 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
 def get_all_current_session_working_memory(session_id):
     connection = conn_pool.get_connection()
     if connection is None:
-        print("[DB] get_all_current_session_working_memory: Failed to get connection from pool.")
+        log.warning("get_all_current_session_working_memory: Failed to get connection from pool.")
         return None
 
     try:
@@ -175,7 +178,7 @@ def get_all_current_session_working_memory(session_id):
             results = cursor.fetchall()
             return results
     except Exception as e:
-        print(f"[DB] get_all_current_session_working_memory error: {e}")
+        log.error("get_all_current_session_working_memory error: %s", e, exc_info=True)
         return None
     finally:
         conn_pool.put_connection(connection)

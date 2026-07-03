@@ -1,7 +1,7 @@
 from Tools.tool import Tool
 import Tools.scratchpad_tool as scratchpad_tool
 import Tools.working_memory_tool as working_memory_tool
-
+import Tools.semantic_memory_tool as semantic_memory_tool
 
 class ToolRegistry:
 
@@ -99,6 +99,48 @@ registry.register(
             "include_all_working_memory": "bool - True to fetch all working memory for the current session"
         },
         func=scratchpad_tool.get_scratchpad_retrieved_context
+    )
+)
+
+
+# ── Semantic memory tools ────────────────────────────────────────────────────
+# LLM accesses long-term memory only through these bridge tools.
+# It never touches ChromaDB or the embedding model directly.
+
+registry.register(
+    Tool(
+        name="store_semantic_memory",
+        description=(
+            "Save an important long-term memory fact about the user. "
+            "Use this when the user shares something worth remembering across sessions: "
+            "their background, goals, skills, preferences, or experiences. "
+            "Write the memory as a single self-contained sentence about the user. "
+            "Do NOT store one-off commands, greetings, or temporary task context."
+        ),
+        parameters={
+            "text":       "str - A self-contained fact sentence about the user.",
+            "importance": "float - 0.0 to 1.0. Use 0.8+ for identity/goals, 0.5 for general info.",
+            "category":   "str - One of: identity, education, interests, goals, preferences, experience, relationships, other."
+        },
+        func=semantic_memory_tool.store_semantic_memory
+    )
+)
+
+
+registry.register(
+    Tool(
+        name="search_semantic_memory",
+        description=(
+            "Search long-term semantic memory for facts relevant to a topic or query. "
+            "Call this when you need to recall something about the user that might have been "
+            "mentioned in a previous session — their background, skills, preferences, or past experiences. "
+            "Returns the most relevant stored facts."
+        ),
+        parameters={
+            "query": "str - The topic or question to search memory for. E.g. 'user programming skills'.",
+            "k":     "int - Number of memories to return (default 5, max 10)."
+        },
+        func=semantic_memory_tool.search_semantic_memory
     )
 )
 

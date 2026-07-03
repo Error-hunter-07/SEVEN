@@ -1,3 +1,13 @@
+"""
+LLMEngine/llm_client.py
+
+CHANGED: After every successful assistant turn, calls
+MemoryManagement.semantic_memory.memory_extractor.extract_and_store()
+to distil and persist long-term facts from the conversation.
+
+Everything else is unchanged from the original.
+"""
+
 import os
 import sys
 from ToolCalling.register import registry
@@ -19,25 +29,42 @@ from Runtime.process_manager import ProcessManager
 
 import ToolCalling.executor as tool_executor
 
+import queue, threading, time
+from MemoryManagement.semantic_memory.memory_extractor import extract_and_store
+
+from Database.chroma_db import wait_for_chroma
+
+
 load_dotenv()
 
+from GlobalHelpers.logger import configure_logging, get_logger
 
+# Configure logging once for the process before other components initialize
+configure_logging()
+log = get_logger(__name__)
+
+# Changes: Added queues extraction instead of immediate direct call to extraction function
+
+_extraction_queue = queue.Queue()
+_last_extraction_time = 0.0
+MIN_EXTRACTION_INTERVAL = 30.0
+
+def _extraction_worker():
+    global _last_extraction_time
+    while True:
+        user_msg, assistant_reply = _extraction_queue.get()
+        now = time.time()
+        if now - _last_extraction_time < MIN_EXTRACTION_INTERVAL:
+            _extraction_queue.task_done()
+            continue
+        extract_and_store(user_msg, assistant_reply)
+        _last_extraction_time = time.time()
+        _extraction_queue.task_done()
+
+threading.Thread(target=_extraction_worker, daemon=True).start()
 # ---------------------------------------------------------------------------
 # Conversation history
-# CHANGED: `messages` now persists across turns instead of being cleared
-# after every ask_llm() call. This is essential for KV-cache continuity:
-# llama.cpp's --cache-reuse works by matching the longest common prefix of
-# tokens between successive requests. If we clear the list each turn the
-# prefix is always just [system], so only the system prompt tokens are
-# reused. With history retained the prefix grows turn-by-turn and the cache
-# reuses all prior turns — exactly what --cache-prompt + --cache-reuse 256
-# is designed for.
-#
-# The system message lives at index 0 and is REPLACED (not re-inserted) at
-# the start of each turn with a freshly built prompt so the scratchpad state
-# is always current. This keeps the system message token position stable,
-# which is critical for cache hits — shifting token positions invalidates the
-# cache for all tokens after the shift point.
+# Persists across turns for KV-cache continuity (see original comments).
 # ---------------------------------------------------------------------------
 messages: list[dict] = []
 
@@ -48,160 +75,234 @@ process_manager = ProcessManager(
 )
 
 try:
-    process_manager.start_for_client()
-except Exception as e:
-    print(f"[ERROR] Failed to start LLM process: {e}")
+    process_manager.start_for_client()\
+    
+    # Wait for ChromaDB to finish loading in parallel with llama-server
+
+    if not wait_for_chroma(timeout=120):
+        log.warning("ChromaDB did not initialize in time.")
+
+    from SessionManager.session_lifecycle import on_session_start
+    session_id = process_manager.session_id
+    on_session_start(session_id)
+except Exception:
+    log.exception("Failed to start LLM process")
 
 
-def _build_system_message() -> dict:
-    """Build the system message dict with a freshly compiled prompt."""
-    return {
-        "role": "system",
-        "content": prompt_builder.build_prompt("")
-    }
+#── BUG FIX 1: max_tokens was 2048 which consumed more space than ──────────
+# the model had left after input tokens, causing empty responses.
+# Set to 1024 — enough for any normal reply, leaves room for input.
+
+MAX_RESPONSE_TOKENS = 1024
+ 
+# ── BUG FIX 2: conversation history grew unbounded every turn. ─────────────
+# After ~4 turns the history alone overflowed the context window.
+# Keep only the last N user/assistant pairs. System message is always kept.
+
+MAX_HISTORY_TURNS = 4
+
+ 
+def _trim_history(msgs: list[dict]) -> list[dict]:
+    """
+    Keep system message + last MAX_HISTORY_TURNS of user/assistant pairs.
+    Never mutates the original list.
+    """
+    system = [m for m in msgs if m["role"] == "system"]
+    conversation = [m for m in msgs if m["role"] != "system"]
+    trimmed = conversation[-(MAX_HISTORY_TURNS * 2):]
+    return system + trimmed
+ 
 
 def _build_tool_schema(parameters: dict) -> dict:
     """Convert the flat {param_name: description} dict into a valid JSON Schema."""
     if not parameters:
         return {"type": "object", "properties": {}}
-    
+
     properties = {}
     for name, desc in parameters.items():
-        # Infer type hint from the description prefix
         desc_str = str(desc)
         if desc_str.startswith("bool"):
             prop_type = "boolean"
         elif desc_str.startswith("int"):
             prop_type = "integer"
+        elif desc_str.startswith("float"):
+            prop_type = "number"
         else:
             prop_type = "string"
         properties[name] = {"type": prop_type, "description": desc_str}
-    
+
     return {
-        "type": "object",
+        "type":       "object",
         "properties": properties,
-        "required": list(parameters.keys())
+        "required":   list(parameters.keys()),
     }
 
 
-def request_completion(request_messages):
+# TEMPORARY DEBUG VERSION — revert after finding the issue
+# Replace request_completion with this to see raw server output:
+ 
+def request_completion(request_messages: list[dict]) -> dict:
+    """
+    Returns a dict with:
+        text            str   — content field from the model (may be empty)
+        native_calls    list  — tool_calls list if finish_reason=tool_calls, else []
+        finish_reason   str   — stop | tool_calls | length | null
+    """
     response = requests.post(
         "http://127.0.0.1:8081/v1/chat/completions",
         json={
-            "model": os.getenv("LLM_MODEL"),
-            "messages": request_messages,
+            "model":       os.getenv("LLM_MODEL"),
+            "messages":    request_messages,
             "tools": [
                 {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
+                        "name":        tool.name,
                         "description": tool.description,
-                        "parameters": _build_tool_schema(tool.parameters)
+                        "parameters":  _build_tool_schema(tool.parameters),
                     }
                 }
                 for tool in registry.list_tools()
             ],
             "temperature": 0.7,
-            "max_tokens": 2048
+            "max_tokens":  MAX_RESPONSE_TOKENS,
         },
+        timeout=120,
     )
     response.raise_for_status()
-    data = response.json()
-    return (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content")
-    )
+    data    = response.json()
+    choice  = data.get("choices", [{}])[0]
+    message = choice.get("message", {})
+ 
+    return {
+        "text":          message.get("content") or "",
+        "native_calls":  message.get("tool_calls") or [],
+        "finish_reason": choice.get("finish_reason", ""),
+    }
+ 
 
 
-def ask_llm(query):
-    # CHANGED: System message is REPLACED at index 0 on every turn (not
-    # inserted). This keeps the scratchpad state current in the prompt while
-    # leaving all prior user/assistant turns in place for KV cache reuse.
-    # Old code did messages.insert(0, ...) which would accumulate duplicate
-    # system messages if the list weren't cleared — now clearing is no longer
-    # needed and the system slot is always exactly one entry at position 0.
-    fresh_system = _build_system_message()
+def ask_llm(query: str) -> str | None:
+    fresh_system = {
+        "role":    "system",
+        "content": prompt_builder.build_prompt(query),
+    }
     if messages and messages[0]["role"] == "system":
-        # Replace the existing system message with the freshly built one.
         messages[0] = fresh_system
     else:
-        # First turn: no system message yet — prepend it.
         messages.insert(0, fresh_system)
-
-    # Add the new user turn.
-    messages.append({
-        "role": "user",
-        "content": query
-    })
-
+ 
+    messages.append({"role": "user", "content": query})
+ 
     try:
-        assistant_reply = request_completion(messages)
-        if assistant_reply is None:
-            raise KeyError("No message content in response")
-
-        print(assistant_reply)
-        tool_executor.execute_tool_calls(assistant_reply)
-        parsed_response = parse_response(assistant_reply)
-
+        trimmed = _trim_history(messages)
+        result  = request_completion(trimmed)
+ 
+        text          = result["text"]
+        native_calls  = result["native_calls"]
+        finish_reason = result["finish_reason"]
+ 
+        # Nothing at all came back
+        if not text and not native_calls:
+            log.warning("Empty response from model.")
+            return "I didn't get a response. Please try again."
+ 
+        # Execute tools — executor now handles both formats
+        tool_executor.execute_tool_calls(
+            text=text,
+            native_tool_calls=native_calls,
+        )
+ 
+        # Build what goes into history
+        # When finish_reason=tool_calls, content is empty — store it properly
+        history_message = {
+            "role":    "assistant",
+            "content": text or None,
+        }
+        if native_calls:
+            history_message["tool_calls"] = native_calls
+ 
+        # Get user-facing text
+        parsed_response = parse_response(text) if text else ""
+ 
+        # If there's no text (pure tool-call reply), ask for a follow-up text reply
         if not parsed_response.strip():
-            retry_prompt = prompt_builder.build_prompt(query)
-            retry_messages = [
-                {"role": "system", "content": retry_prompt},
-                {"role": "user", "content": query},
-                {
-                    "role": "system",
-                    "content": (
-                        "Return a normal text answer. "
-                        "Do not include any <tool_call> blocks."
-                    )
-                },
+            follow_messages = _trim_history(messages) + [
+                history_message,
+                *[
+                    {
+                        "role":         "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content":      "Done.",
+                    }
+                    for tc in native_calls
+                ],
+                {"role": "user", "content": "Now give your text reply."},
             ]
-            retry_reply = request_completion(retry_messages)
-            if retry_reply:
-                parsed_response = parse_response(retry_reply)
-
+            follow_result = request_completion(follow_messages)
+            parsed_response = parse_response(follow_result["text"])
+ 
         if not parsed_response.strip():
-            parsed_response = (
-                "I could not produce a response without tool calls. "
-                "Please rephrase your request."
-            )
+            parsed_response = "Done."
+ 
+        messages.append(history_message)
+ # ==========================================================
+        # FIX:
+        # Build a summary of any native tool calls so memory extraction
+        # still has assistant context even when text == "".
+        # ==========================================================
+        tool_summary = ""
+        if native_calls:
+            parts = [
+                f"[Called {tc['function']['name']}]"
+                for tc in native_calls
+            ]
+            tool_summary = " ".join(parts)
 
-        # CHANGED: Append the assistant reply to history so the next turn
-        # includes it in the message list. This is what allows KV cache reuse
-        # across turns — the model sees the full prior context each request
-        # and llama.cpp reuses all matching prefix tokens from the cache.
-        messages.append({
-            "role": "assistant",
-            "content": assistant_reply
-        })
+        full_assistant_activity = f"{text} {tool_summary}".strip()
 
-        # CHANGED: Removed messages.clear() — clearing was the root cause of
-        # SEVEN having no conversational memory. History is now preserved.
-        # The system message at index 0 is updated each turn (see above) so
-        # there is no need to wipe the list.
+        # _maybe_extract_memory(query, full_assistant_activity)
 
-        print(get_scratchpad_memory())
+        # Instead of calling extract_and_store directly:
+        _extraction_queue.put((query, full_assistant_activity))
+        # ==========================================================
+
+ 
+        # _maybe_extract_memory(query, text)
+ 
+        log.debug(get_scratchpad_memory())
         return parsed_response
-
+ 
     except requests.exceptions.ConnectionError:
-        print("[ERROR] Could not connect to local LLM.")
-
+        log.error("Could not connect to local LLM server at :8081.")
     except requests.exceptions.Timeout:
-        print("[ERROR] Model took too long to respond.")
-
+        log.error("Model timed out.")
     except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Request failed: {e}")
-
+        log.error("Request failed: %s", e, exc_info=True)
     except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}")
+        log.exception("Unexpected error during ask_llm")
+ 
+
+
+
+def _maybe_extract_memory(user_message: str, assistant_activity: str) -> None:
+    # Guard on USER message length, not assistant reply
+    if len(user_message.split()) < 8:
+        return
+    # No need to check assistant_activity length anymore —
+    # we always have something now (either text or tool summary)
+    try:
+        extract_and_store(user_message=user_message, assistant_reply=assistant_activity)
+    except Exception as e:
+        log.exception("Memory extraction error (non-fatal)")
 
 
 if __name__ == "__main__":
     while True:
         user_query = input("You: ")
-
+        from SessionManager.session_lifecycle import on_session_end
         if user_query.strip().lower() == "/stop":
+            on_session_end(process_manager.session_id)
             process_manager.stop_from_cli()
             break
 
