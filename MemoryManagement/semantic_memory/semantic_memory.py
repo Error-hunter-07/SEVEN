@@ -7,6 +7,7 @@ This class never imports chromadb directly — only VectorDBClient.
 """
 
 from __future__ import annotations
+import threading
 
 from Database.chroma_db import semantic_memory_db
 from VectorDBClient.VectorClient import VectorDBClient
@@ -18,8 +19,16 @@ class SemanticMemory:
     def __init__(self, db: VectorDBClient | None = None):
         # Allow injecting a different backend (useful for tests)
         self._db = db or semantic_memory_db
-        memory_lifecycle.start(self._db)
+        # Don't start lifecycle immediately — ChromaDB may still be loading
+        threading.Thread(target=self._start_lifecycle_when_ready, daemon=True).start()
 
+    def _start_lifecycle_when_ready(self):
+        import Database.chroma_db as chroma_module
+        ready = chroma_module.wait_for_chroma(timeout=120)
+        if not ready or chroma_module.semantic_memory_db is None:
+            print("[SemanticMemory] WARNING: ChromaDB never became ready — lifecycle skipped.")
+            return
+        memory_lifecycle.start(chroma_module.semantic_memory_db)
     # ---------------------------------------------------------------- write
 
     def store(

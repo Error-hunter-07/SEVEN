@@ -29,12 +29,11 @@ from Runtime.process_manager import ProcessManager
 
 import ToolCalling.executor as tool_executor
 
-# CHANGED: import memory extractor for post-turn semantic memory extraction
-from MemoryManagement.semantic_memory.memory_extractor import extract_and_store
-
-# llm_client.py — top of file, with your other imports
 import queue, threading, time
 from MemoryManagement.semantic_memory.memory_extractor import extract_and_store
+
+from Database.chroma_db import wait_for_chroma
+
 
 load_dotenv()
 
@@ -70,7 +69,13 @@ process_manager = ProcessManager(
 )
 
 try:
-    process_manager.start_for_client()
+    process_manager.start_for_client()\
+    
+    # Wait for ChromaDB to finish loading in parallel with llama-server
+
+    if not wait_for_chroma(timeout=120):
+        print("[llm_client] WARNING: ChromaDB did not initialize in time.")
+
     from SessionManager.session_lifecycle import on_session_start
     session_id = process_manager.session_id
     on_session_start(session_id)
@@ -291,7 +296,7 @@ if __name__ == "__main__":
         user_query = input("You: ")
         from SessionManager.session_lifecycle import on_session_end
         if user_query.strip().lower() == "/stop":
-            on_session_end(get_session_id())
+            on_session_end(process_manager.session_id)
             process_manager.stop_from_cli()
             break
 
