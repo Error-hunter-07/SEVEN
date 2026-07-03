@@ -17,6 +17,9 @@ Score formula (for pruning priority):
 
 import threading
 from datetime import datetime, timezone
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 # ── tuneable constants ────────────────────────────────────────────────────────
 MAX_MEMORIES        = 500    # hard cap before overflow pruning kicks in
@@ -47,7 +50,7 @@ def _run(db) -> None:
         _apply_decay(db)
         _prune(db)
     except Exception as e:
-        print(f"[MemoryLifecycle] Error (non-fatal): {e}")
+        log.exception("Memory lifecycle pass failed (non-fatal)")
 
 
 def _apply_decay(db) -> None:
@@ -57,7 +60,7 @@ def _apply_decay(db) -> None:
     """
     all_mem = db._collection.get(include=["metadatas", "documents"])
     if not all_mem["ids"]:
-        print("[MemoryLifecycle] Decay pass: collection empty, nothing to do.")
+        log.debug("Decay pass: collection empty, nothing to do.")
         return
 
     now = datetime.now(timezone.utc)
@@ -84,7 +87,7 @@ def _apply_decay(db) -> None:
         updates.append((mem_id, decayed, meta))
 
     if not updates:
-        print("[MemoryLifecycle] Decay pass: no memories old enough to decay.")
+        log.debug("Decay pass: no memories old enough to decay.")
         return
 
     for mem_id, new_importance, meta in updates:
@@ -93,7 +96,7 @@ def _apply_decay(db) -> None:
             metadatas=[{**meta, "importance": new_importance}]
         )
 
-    print(f"[MemoryLifecycle] Decayed {len(updates)} memories.")
+    log.info("Decayed %d memories.", len(updates))
 
 
 def _prune(db) -> None:
@@ -124,10 +127,10 @@ def _prune(db) -> None:
         to_delete |= {mid for _, mid, _ in remaining[:overflow]}
 
     if not to_delete:
-        print(f"[MemoryLifecycle] Prune pass: nothing to prune. Count: {db.count()}")
+        log.debug("Prune pass: nothing to prune. Count: %d", db.count())
         return
 
     for mem_id in to_delete:
         db.delete(mem_id)
 
-    print(f"[MemoryLifecycle] Pruned {len(to_delete)} memories. Remaining: {db.count()}")
+    log.info("Pruned %d memories. Remaining: %d", len(to_delete), db.count())

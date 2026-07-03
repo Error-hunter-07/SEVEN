@@ -1,0 +1,103 @@
+2026-07-04 03:02:10,293 | b006ba0f3ae24f4f8e8caebe716292de | INFO     | SessionManager.session_lifecycle | Session b006ba0f3ae24f4f8e8caebe716292de started with semantic context.
+2026-07-04 03:02:10,308 | no-session | DEBUG    | MemoryManagement.semantic_memory.memory_lifecycle | Decay pass: no memories old enough to decay.
+2026-07-04 03:02:10,312 | no-session | DEBUG    | MemoryManagement.semantic_memory.memory_lifecycle | Prune pass: nothing to prune. Count: 6
+2026-07-04 03:02:10,715 | no-session | DEBUG    | urllib3.connectionpool | Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-07-04 03:02:11,910 | no-session | DEBUG    | urllib3.connectionpool | https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-07-04 03:02:49,923 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | Starting new HTTP connection (1): 127.0.0.1:8081
+2026-07-04 03:02:54,791 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8081 "POST /v1/chat/completions HTTP/1.1" 200 1608
+2026-07-04 03:02:54,792 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | Starting new HTTP connection (1): 127.0.0.1:8081
+2026-07-04 03:03:11,894 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8081 "POST /v1/chat/completions HTTP/1.1" 200 4802
+2026-07-04 03:03:11,895 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | __main__ | SEVEN'S SHORT-TERM MEMORY
+
+SEVEN NOTES:
+
+
+CONVERSATION SUMMARY:
+
+
+CURRENT GOAL:
+Provide detailed information about the Seven Wonders of the World, including their construction and stories.
+
+SUBTASKS:
+None
+
+COMPLETED SUBTASKS:
+None
+
+
+
+CURRENT STEP:
+
+
+NEXT ACTION:
+
+
+ACTIVE TOOL:
+
+
+TOOL OUTPUTS:
+  update_scratchpad_state: Updated planning.current_goal = Provide detailed information about the Seven Wonders of the World, including their construction and stories.
+
+MEMORY UPDATES:
+None
+
+RETRY COUNT:
+0
+
+LAST ERROR:
+None
+
+
+2026-07-04 03:03:11,896 | no-session | DEBUG    | urllib3.connectionpool | Starting new HTTP connection (1): 127.0.0.1:8081
+2026-07-04 03:03:12,180 | no-session | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8081 "POST /v1/chat/completions HTTP/1.1" 200 632
+2026-07-04 03:03:48,376 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | Starting new HTTP connection (1): 127.0.0.1:8081
+2026-07-04 03:03:52,635 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8081 "POST /v1/chat/completions HTTP/1.1" 200 1532
+2026-07-04 03:03:52,637 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | Starting new HTTP connection (1): 127.0.0.1:8081
+2026-07-04 03:04:03,145 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8081 "POST /v1/chat/completions HTTP/1.1" 200 3060
+2026-07-04 03:04:03,145 | b006ba0f3ae24f4f8e8caebe716292de | DEBUG    | __main__ | SEVEN'S SHORT-TERM MEMORY
+
+SEVEN NOTES:
+
+
+CONVERSATION SUMMARY:
+
+
+CURRENT GOAL:
+Provide detailed information about the Taj Mahal, including its construction and story.
+
+SUBTASKS:
+None
+
+COMPLETED SUBTASKS:
+None
+
+
+
+CURRENT STEP:
+
+
+NEXT ACTION:
+
+
+ACTIVE TOOL:
+
+
+TOOL OUTPUTS:
+  update_scratchpad_state: Updated planning.current_goal = Provide detailed information about the Taj Mahal, including its construction and story.
+
+MEMORY UPDATES:
+None
+
+RETRY COUNT:
+0
+
+LAST ERROR:
+None
+
+
+2026-07-04 03:04:03,146 | no-session | DEBUG    | urllib3.connectionpool | Starting new HTTP connection (1): 127.0.0.1:8081
+2026-07-04 03:04:03,284 | no-session | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8081 "POST /v1/chat/completions HTTP/1.1" 200 634
+2026-07-04 03:05:01,790 | b006ba0f3ae24f4f8e8caebe716292de | WARNING  | MemoryManagement.semantic_memory.semantic_memory | store: DB not available.
+2026-07-04 03:05:01,791 | b006ba0f3ae24f4f8e8caebe716292de | INFO     | SessionManager.session_lifecycle | Session b006ba0f3ae24f4f8e8caebe716292de ended — scratchpad promoted and cleared.
+2026-07-04 03:05:01,791 | b006ba0f3ae24f4f8e8caebe716292de | INFO     | Runtime.process_manager | Stopping subprocess...
+2026-07-04 03:05:02,223 | b006ba0f3ae24f4f8e8caebe716292de | INFO     | Runtime.process_manager | Stopped

@@ -13,6 +13,9 @@ from Database.chroma_db import semantic_memory_db
 from VectorDBClient.VectorClient import VectorDBClient
 
 from MemoryManagement.semantic_memory import memory_lifecycle
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 class SemanticMemory:
 
@@ -26,7 +29,7 @@ class SemanticMemory:
         import Database.chroma_db as chroma_module
         ready = chroma_module.wait_for_chroma(timeout=120)
         if not ready or chroma_module.semantic_memory_db is None:
-            print("[SemanticMemory] WARNING: ChromaDB never became ready — lifecycle skipped.")
+            log.warning("ChromaDB never became ready — lifecycle skipped.")
             return
         memory_lifecycle.start(chroma_module.semantic_memory_db)
     # ---------------------------------------------------------------- write
@@ -47,7 +50,7 @@ class SemanticMemory:
         Returns the memory id on success, None on failure.
         """
         if self._db is None:
-            print("[SemanticMemory] store: DB not available.")
+            log.warning("store: DB not available.")
             return None
 
         text = text.strip()
@@ -76,7 +79,7 @@ class SemanticMemory:
                     "importance": max(float(old_meta.get("importance", 0.5)), importance),
                 },
             )
-            print(f"[SemanticMemory] Dedup hit — updated existing memory: {mem_id}")
+            log.debug("Dedup hit — updated existing memory: %s", mem_id)
             return mem_id
         
         
@@ -118,7 +121,7 @@ class SemanticMemory:
             },
         )
         if success:
-            print(f"[SemanticMemory] Stored: [{category}] {text[:80]}")
+            log.debug("Stored memory [%s] %s", category, text[:80])
             return mem_id
         return None
 

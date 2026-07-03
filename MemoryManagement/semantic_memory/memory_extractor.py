@@ -14,6 +14,9 @@ import os
 import requests
 
 from MemoryManagement.semantic_memory.semantic_memory import semantic_memory  # FIX 2: singleton
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 # ── Extraction prompt ────────────────────────────────────────────────────────
 
@@ -105,10 +108,10 @@ def _extract_facts(user_message: str, assistant_reply: str) -> list[dict]:
         return _parse_json_array(raw_text)
 
     except requests.exceptions.RequestException as e:
-        print(f"[MemoryExtractor] LLM call failed: {e}")
+        log.error("LLM call failed: %s", e, exc_info=True)
         return []
-    except Exception as e:
-        print(f"[MemoryExtractor] Unexpected error: {e}")
+    except Exception:
+        log.exception("Unexpected error in extract_and_store")
         return []
 
 
@@ -133,5 +136,5 @@ def _parse_json_array(text: str) -> list[dict]:
             return [item for item in parsed if isinstance(item, dict)]
         return []
     except json.JSONDecodeError as e:
-        print(f"[MemoryExtractor] JSON parse failed: {e} — raw: {text[:200]}")
+        log.warning("JSON parse failed: %s — raw: %s", e, text[:200])
         return []

@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from VectorDBClient.VectorClient import VectorDBClient
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class ChromaClient(VectorDBClient):
@@ -43,13 +46,13 @@ class ChromaClient(VectorDBClient):
             metadata={"hnsw:space": distance_fn},
         )
 
-        print(f"[ChromaClient] '{collection_name}' ready — {self._collection.count()} memories")
+        log.info("'%s' ready — %d memories", collection_name, self._collection.count())
 
     # --------------- CRUD Operations ----------------------------------#
 
     def add(self, id: str, text: str, metadata: dict[str, Any]) -> bool:
         if not text or not text.strip():
-            print("[ChromaClient] add: empty text — skipped.")
+            log.warning("add: empty text — skipped.")
             return False
         try:
             self._collection.add(
@@ -59,7 +62,7 @@ class ChromaClient(VectorDBClient):
             )
             return True
         except Exception as e:
-            print(f"[ChromaClient] add error: {e}")
+            log.error("add error: %s", e, exc_info=True)
             return False
 
     def search(self, query: str, k: int = 5, where: dict | None = None) -> list[dict]:
@@ -88,7 +91,7 @@ class ChromaClient(VectorDBClient):
                 )
             ]
         except Exception as e:
-            print(f"[ChromaClient] search error: {e}")
+            log.error("search error: %s", e, exc_info=True)
             return []
 
     def get(self, id: str) -> dict | None:
@@ -102,13 +105,13 @@ class ChromaClient(VectorDBClient):
                 "metadata": raw["metadatas"][0],
             }
         except Exception as e:
-            print(f"[ChromaClient] get error: {e}")
+            log.error("get error: %s", e, exc_info=True)
             return None
 
     def update(self, id: str, text: str | None = None, metadata: dict | None = None) -> bool:
         existing = self.get(id)
         if existing is None:
-            print(f"[ChromaClient] update: id '{id}' not found.")
+            log.warning("update: id '%s' not found.", id)
             return False
         new_text     = (text or existing["text"]).strip()
         merged_meta  = {**existing["metadata"], **(metadata or {})}
@@ -120,7 +123,7 @@ class ChromaClient(VectorDBClient):
             )
             return True
         except Exception as e:
-            print(f"[ChromaClient] update error: {e}")
+            log.error("update error: %s", e, exc_info=True)
             return False
 
     def delete(self, id: str) -> bool:
@@ -128,7 +131,7 @@ class ChromaClient(VectorDBClient):
             self._collection.delete(ids=[id])
             return True
         except Exception as e:
-            print(f"[ChromaClient] delete error: {e}")
+            log.error("delete error: %s", e, exc_info=True)
             return False
 
     def count(self) -> int:

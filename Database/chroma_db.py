@@ -12,6 +12,9 @@ os.environ["HF_HOME"] = _cache
 from VectorDBClient.ChromaClient import ChromaClient
 from dotenv import load_dotenv
 import threading
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 load_dotenv()
 
@@ -29,7 +32,7 @@ def _init_chroma():
         )
         # print(f"[ChromaClient] 'semantic_memory' ready — {semantic_memory_db.count()} memories")
     except Exception as e:
-        print(f"[chroma_db] FATAL: Could not initialise ChromaDB: {e}")
+        log.critical("FATAL: Could not initialise ChromaDB: %s", e, exc_info=True)
     finally:
         _chroma_ready.set()  # always signal, even on failure
 

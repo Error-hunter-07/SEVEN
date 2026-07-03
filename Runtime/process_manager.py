@@ -3,6 +3,9 @@ import subprocess
 import time
 from typing import Optional, TextIO
 import SessionManager.session_generator as session_generator
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class ProcessManager:
@@ -62,7 +65,7 @@ class ProcessManager:
 
         self.alive = False
         self.session_id = session_generator.generate_universal_session_id()
-        print("Session id generated as:- " + self.session_id)
+        log.info("Session id generated: %s", self.session_id)
 
         # CHANGED: Mark as initialised so repeated __init__ calls are no-ops.
         self._initialised = True
@@ -72,7 +75,7 @@ class ProcessManager:
     def start(self):
 
         if self.alive:
-            print("[PROCESS] Already running")
+            log.info("Already running")
             return
 
         command = [
@@ -105,7 +108,7 @@ class ProcessManager:
             "--port", "8081"
         ]
 
-        print("[PROCESS] Starting llama.cpp subprocess...")
+        log.info("Starting llama.cpp subprocess...")
 
         try:
             self.log_file = open("llama_server.log", "a")
@@ -121,14 +124,14 @@ class ProcessManager:
             raise
 
         self.alive = True
-        print("[PROCESS] Started successfully")
+        log.info("Started successfully")
 
     def stop(self):
 
         if not self.process:
             return
 
-        print("[PROCESS] Stopping subprocess...")
+        log.info("Stopping subprocess...")
 
         self.alive = False
 
@@ -145,11 +148,11 @@ class ProcessManager:
             self.log_file.close()
             self.log_file = None
 
-        print("[PROCESS] Stopped")
+        log.info("Stopped")
 
     def restart(self):
 
-        print("[PROCESS] Restarting model...")
+        log.info("Restarting model...")
 
         self.stop()
         time.sleep(1)

@@ -2,6 +2,9 @@ import psycopg2
 from psycopg2 import pool, OperationalError
 import os
 from dotenv import load_dotenv
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 load_dotenv()
 
@@ -27,20 +30,20 @@ class DB:
                 self._maxconn,
                 self.connection_string
             )
-            print("[DB] Connection pool initialised successfully")
+            log.info("Connection pool initialised successfully")
         except OperationalError as e:
-            print(f"[DB] Could not initialise connection pool: {e}")
+            log.error("Could not initialise connection pool: %s", e, exc_info=True)
         except Exception as e:
-            print(f"[DB] Unexpected error during pool init: {e}")
+            log.error("Unexpected error during pool init: %s", e, exc_info=True)
 
     def get_connection(self):
         if self._pool is None:
-            print("[DB] Pool is not available.")
+            log.warning("Pool is not available.")
             return None
         try:
             return self._pool.getconn()
         except Exception as e:
-            print(f"[DB] Failed to get connection from pool: {e}")
+            log.error("Failed to get connection from pool: %s", e, exc_info=True)
             return None
 
     def put_connection(self, conn):
@@ -50,4 +53,4 @@ class DB:
     def close_all(self):
         if self._pool:
             self._pool.closeall()
-            print("[DB] All pooled connections closed")
+            log.info("All pooled connections closed")

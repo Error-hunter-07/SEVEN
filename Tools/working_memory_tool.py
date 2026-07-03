@@ -2,6 +2,9 @@ import json
 import Database.working_memory_db_client as working_memory_db_client
 import Runtime.process_manager as process_manager
 import Tools.scratchpad_tool as scratchpad_tool
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def _get_session_id():
@@ -101,7 +104,7 @@ def add_scratchpad_memory_update(memory_type, data, update=False):
     try:
         data_parsed = json.loads(data)
     except json.JSONDecodeError as e:
-        print(f"[WorkingMemoryTool] add_scratchpad_memory_update: invalid JSON in data — {e}")
+        log.warning("add_scratchpad_memory_update: invalid JSON in data — %s", e)
         scratchpad_tool.add_scratchpad_tool_output(
             "add_scratchpad_memory_update",
             f"FAILED — invalid JSON: {e}"

@@ -1,5 +1,8 @@
 import MemoryManagement.shortterm_memory.scratchpad as scratchpad
 import MemoryManagement.shortterm_memory.summarizer as summarizer
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 
 _ALLOWED_KEYS = {
@@ -79,7 +82,7 @@ def set_last_error(error):
 
 def clear_scratchpad_data():
     scratchpad.scratchpad.reset()
-    print("Scratchpad cleared")
+    log.info("Scratchpad cleared")
 
 
 def update_scratchpad_state(section, key, value):

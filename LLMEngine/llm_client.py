@@ -37,6 +37,12 @@ from Database.chroma_db import wait_for_chroma
 
 load_dotenv()
 
+from GlobalHelpers.logger import configure_logging, get_logger
+
+# Configure logging once for the process before other components initialize
+configure_logging()
+log = get_logger(__name__)
+
 # Changes: Added queues extraction instead of immediate direct call to extraction function
 
 _extraction_queue = queue.Queue()
@@ -74,13 +80,13 @@ try:
     # Wait for ChromaDB to finish loading in parallel with llama-server
 
     if not wait_for_chroma(timeout=120):
-        print("[llm_client] WARNING: ChromaDB did not initialize in time.")
+        log.warning("ChromaDB did not initialize in time.")
 
     from SessionManager.session_lifecycle import on_session_start
     session_id = process_manager.session_id
     on_session_start(session_id)
-except Exception as e:
-    print(f"[ERROR] Failed to start LLM process: {e}")
+except Exception:
+    log.exception("Failed to start LLM process")
 
 
 #── BUG FIX 1: max_tokens was 2048 which consumed more space than ──────────
@@ -198,7 +204,7 @@ def ask_llm(query: str) -> str | None:
  
         # Nothing at all came back
         if not text and not native_calls:
-            print("[llm_client] Empty response from model.")
+            log.warning("Empty response from model.")
             return "I didn't get a response. Please try again."
  
         # Execute tools — executor now handles both formats
@@ -264,17 +270,17 @@ def ask_llm(query: str) -> str | None:
  
         # _maybe_extract_memory(query, text)
  
-        print(get_scratchpad_memory())
+        log.debug(get_scratchpad_memory())
         return parsed_response
  
     except requests.exceptions.ConnectionError:
-        print("[ERROR] Could not connect to local LLM server at :8081.")
+        log.error("Could not connect to local LLM server at :8081.")
     except requests.exceptions.Timeout:
-        print("[ERROR] Model timed out.")
+        log.error("Model timed out.")
     except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Request failed: {e}")
+        log.error("Request failed: %s", e, exc_info=True)
     except Exception as e:
-        print(f"[ERROR] Unexpected error: {type(e).__name__}: {e}")
+        log.exception("Unexpected error during ask_llm")
  
 
 
@@ -288,7 +294,7 @@ def _maybe_extract_memory(user_message: str, assistant_activity: str) -> None:
     try:
         extract_and_store(user_message=user_message, assistant_reply=assistant_activity)
     except Exception as e:
-        print(f"[llm_client] Memory extraction error (non-fatal): {e}")
+        log.exception("Memory extraction error (non-fatal)")
 
 
 if __name__ == "__main__":

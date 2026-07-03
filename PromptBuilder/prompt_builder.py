@@ -8,6 +8,9 @@ Previously it passed "" always (query was unused).
 
 import MemoryManagement.memory_retriever as memory_retriever
 import GlobalHelpers.token_counter as token_counter
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 LOCAL_CTX_LIMIT = 12000
 
@@ -48,11 +51,11 @@ def build_prompt(user_query: str) -> str:
         total = token_counter.count_tokens(
             SYSTEM_PROMPT + retrieved_context + user_query
         )
-        print(f"[PromptBuilder] Over limit ({total} tokens) — dropped semantic memory.")
+        log.warning("Over limit (%d tokens) — dropped semantic memory.", total)
 
     if total > LOCAL_CTX_LIMIT:
         retrieved_context = ""
-        print(f"[PromptBuilder] Still over limit — dropped all context.")
+        log.warning("Still over limit — dropped all context.")
 
     if retrieved_context and retrieved_context.strip():
         return f"{SYSTEM_PROMPT}\n\n{retrieved_context}"

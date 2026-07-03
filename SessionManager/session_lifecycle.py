@@ -2,6 +2,9 @@
 
 from MemoryManagement.shortterm_memory.scratchpad import scratchpad
 from MemoryManagement.semantic_memory.semantic_memory import semantic_memory
+from GlobalHelpers.logger import get_logger, set_session_id, attach_session_file_handler
+
+log = get_logger(__name__)
 
 def on_session_end(session_id: str) -> None:
     """
@@ -53,7 +56,7 @@ def on_session_end(session_id: str) -> None:
         )
 
     scratchpad.reset()
-    print(f"[SessionLifecycle] Session {session_id} ended — scratchpad promoted and cleared.")
+    log.info("Session %s ended — scratchpad promoted and cleared.", session_id)
 
 
 
@@ -73,8 +76,14 @@ def on_session_start(session_id: str, user_query: str = "") -> None:
     )
     context = "\n".join(filter(None, [goals, experience]))
 
+    # Set the active session id for log lines and create a per-session file
+    set_session_id(session_id)
+    try:
+        attach_session_file_handler(session_id)
+    except Exception:
+        log.exception("Failed to attach session file handler for %s", session_id)
+
     if context:
         # Store as a retrieved memory so it appears in the scratchpad
         scratchpad.add_retrieved_context(context)
-
-    print(f"[SessionLifecycle] Session {session_id} started with semantic context.")
+    log.info("Session %s started with semantic context.", session_id)

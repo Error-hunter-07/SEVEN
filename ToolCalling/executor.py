@@ -1,6 +1,9 @@
 import json
 from .parser import parse_tool_calls
 from .register import registry
+from GlobalHelpers.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def execute_tool_calls(text: str = "", native_tool_calls: list = None) -> None:
@@ -51,7 +54,7 @@ def _run_call(call: dict) -> None:
 
     tool = registry.get_tool(tool_name)
     if tool is None:
-        print(f"[Executor] Unknown tool: '{tool_name}'")
+        log.warning("Unknown tool: '%s'", tool_name)
         return
 
     arguments = call.get("arguments") or {}
@@ -70,9 +73,9 @@ def _run_call(call: dict) -> None:
             try:
                 tool.func()
             except TypeError:
-                print(f"[Executor] Failed to call '{tool_name}' with args {normalized_args}")
+                log.error("Failed to call '%s' with args %s", tool_name, normalized_args)
     else:
         try:
             tool.func()
         except TypeError:
-            print(f"[Executor] Failed to call '{tool_name}' (no params)")
+            log.error("Failed to call '%s' (no params)", tool_name)
