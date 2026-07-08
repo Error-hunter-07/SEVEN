@@ -17,6 +17,26 @@ from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
 
+# ── Negation markers for quick polarity mismatch detection ────────────────────
+_NEGATION_MARKERS = (
+    "not", "n't", "never", "no longer", "stopped", "quit",
+    "dislikes", "dislike", "hates", "hate", "doesn't", "don't", "without"
+)
+
+
+def _has_negation_mismatch(text_a: str, text_b: str) -> bool:
+    """
+    Cheap heuristic guard: if exactly one of the two texts contains a negation
+    marker, treat them as opposites, not paraphrases — never merge.
+    
+    This catches common cases like "likes X" vs "dislikes X" for near-zero cost.
+    Not linguistically bulletproof, but prevents the worst failure mode.
+    """
+    a_neg = any(marker in text_a.lower() for marker in _NEGATION_MARKERS)
+    b_neg = any(marker in text_b.lower() for marker in _NEGATION_MARKERS)
+    return a_neg != b_neg  # True only when they disagree on negation
+
+
 class SemanticMemory:
 
     def __init__(self, db: VectorDBClient | None = None):
@@ -40,6 +60,7 @@ class SemanticMemory:
         text: str,
         importance: float = 0.5,
         category: str     = "other",
+        polarity: str     = "neutral",
         source: str       = "conversation",
     ) -> str | None:
         """
@@ -47,6 +68,9 @@ class SemanticMemory:
 
         Before inserting, checks for near-duplicates (cosine dist <= 0.08).
         If one exists, bumps its access_count instead of creating a new entry.
+        
+        Checks for paraphrase-range duplicates (0.08–0.35) and merges only if
+        they have the same category AND polarity AND no negation mismatch.
 
         Returns the memory id on success, None on failure.
         """
@@ -84,11 +108,14 @@ class SemanticMemory:
             return mem_id
         
         
-        # Stage 2: paraphrase range (0.08–0.35) → only merge if SAME category
+        # Stage 2: paraphrase range (0.08–0.35) → only merge if SAME category, polarity, and no negation mismatch
         paraphrase_dup = self._db.find_duplicate(text, threshold=0.35)
         if paraphrase_dup:
             same_category = paraphrase_dup["metadata"].get("category") == category
-            if same_category:
+            same_polarity = paraphrase_dup["metadata"].get("polarity", "neutral") == polarity
+            contradicts = _has_negation_mismatch(text, paraphrase_dup["text"])
+            
+            if same_category and same_polarity and not contradicts:
                 # Keep the higher-importance version's text, merge metadata
                 old_importance = float(paraphrase_dup["metadata"].get("importance", 0.5))
                 if importance > old_importance:
@@ -105,6 +132,7 @@ class SemanticMemory:
                         "access_count": int(paraphrase_dup["metadata"].get("access_count", 0)) + 1
                     })
                 return paraphrase_dup["id"]
+            # else: contradicts or mismatch — fall through to "New memory" below
 
         # New memory
         mem_id = VectorDBClient.new_id()
@@ -115,6 +143,7 @@ class SemanticMemory:
             metadata={
                 "importance":    importance,
                 "category":      category,
+                "polarity":      polarity,
                 "source":        source,
                 "created_at":    now,
                 "last_accessed": now,
