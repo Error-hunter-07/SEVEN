@@ -4,9 +4,6 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from VectorDBClient.VectorClient import VectorDBClient
 from GlobalHelpers.logger import get_logger
@@ -19,12 +16,11 @@ class ChromaClient(VectorDBClient):
         pip install chromadb sentence-transformers
     """
 
-
     def __init__(
         self,
         collection_name: str = "semantic_memory",
-        persist_dir: str     = os.getenv("DEFAULT_PERSIST_DIR"),
-        embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL"),
+        persist_dir: str     = None,
+        embedding_model: str = None,
         distance_fn: str     = "cosine",
     ):
         try:

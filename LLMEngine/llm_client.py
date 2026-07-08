@@ -10,6 +10,7 @@ Everything else is unchanged from the original.
 
 import os
 import sys
+import contextvars
 from ToolCalling.register import registry
 
 if __package__ is None or __package__ == "":
@@ -23,21 +24,19 @@ try:
 except ImportError:
     from response_parser import parse_response
 
-from dotenv import load_dotenv
 import PromptBuilder.prompt_builder as prompt_builder
 from Runtime.process_manager import ProcessManager
 
 import ToolCalling.executor as tool_executor
 
 import queue, threading, time
-from MemoryManagement.semantic_memory.memory_extractor import extract_and_store
+from MemoryManagement.semantic_memory.memory_extractor import extract_and_store, extract_and_store_batch
 
 from Database.chroma_db import wait_for_chroma
 
 
-load_dotenv()
-
 from GlobalHelpers.logger import configure_logging, get_logger
+from GlobalHelpers.config import settings
 
 # Configure logging once for the process before other components initialize
 configure_logging()
@@ -46,22 +45,54 @@ log = get_logger(__name__)
 # Changes: Added queues extraction instead of immediate direct call to extraction function
 
 _extraction_queue = queue.Queue()
+_pending_batch: list[tuple[str, str]] = []
+_pending_lock = threading.Lock()
+_worker_lock = threading.Lock()
+_worker_started = False
 _last_extraction_time = 0.0
 MIN_EXTRACTION_INTERVAL = 30.0
+MAX_BATCH_WAIT = 90.0          # force-flush safety valve
+_first_pending_time = None
 
 def _extraction_worker():
-    global _last_extraction_time
+    global _last_extraction_time, _first_pending_time
     while True:
-        user_msg, assistant_reply = _extraction_queue.get()
+        turn = _extraction_queue.get()
+        with _pending_lock:
+            _pending_batch.append(turn)
+            if _first_pending_time is None:
+                _first_pending_time = time.time()
+
         now = time.time()
-        if now - _last_extraction_time < MIN_EXTRACTION_INTERVAL:
+        cooldown_elapsed = now - _last_extraction_time >= MIN_EXTRACTION_INTERVAL
+        waited_too_long = (_first_pending_time is not None
+                            and now - _first_pending_time >= MAX_BATCH_WAIT)
+
+        if not (cooldown_elapsed or waited_too_long):
             _extraction_queue.task_done()
             continue
-        extract_and_store(user_msg, assistant_reply)
+
+        with _pending_lock:
+            batch, _pending_batch[:] = list(_pending_batch), []
+            _first_pending_time = None
+
+        extract_and_store_batch(batch)
         _last_extraction_time = time.time()
         _extraction_queue.task_done()
 
-threading.Thread(target=_extraction_worker, daemon=True).start()
+def _start_extraction_worker_with_context() -> None:
+    global _worker_started
+    with _worker_lock:
+        if _worker_started:
+            return
+        ctx = contextvars.copy_context()
+        threading.Thread(
+            target=lambda: ctx.run(_extraction_worker),
+            daemon=True,
+            name="MemoryExtraction",
+        ).start()
+        _worker_started = True
+
 # ---------------------------------------------------------------------------
 # Conversation history
 # Persists across turns for KV-cache continuity (see original comments).
@@ -69,9 +100,9 @@ threading.Thread(target=_extraction_worker, daemon=True).start()
 messages: list[dict] = []
 
 process_manager = ProcessManager(
-    model_path=os.getenv("LLM_MODEL_PATH"),
-    llama_cli_path=os.getenv("LLM_CLI_PATH"),
-    mmproj_path=os.getenv("MMPROJ_PATH")
+    model_path=settings.llm_model_path,
+    llama_cli_path=settings.llm_cli_path,
+    mmproj_path=settings.mmproj_path
 )
 
 try:
@@ -85,6 +116,7 @@ try:
     from SessionManager.session_lifecycle import on_session_start
     session_id = process_manager.session_id
     on_session_start(session_id)
+    _start_extraction_worker_with_context()
 except Exception:
     log.exception("Failed to start LLM process")
 
@@ -151,7 +183,7 @@ def request_completion(request_messages: list[dict]) -> dict:
     response = requests.post(
         "http://127.0.0.1:8081/v1/chat/completions",
         json={
-            "model":       os.getenv("LLM_MODEL"),
+            "model":       settings.llm_model,
             "messages":    request_messages,
             "tools": [
                 {

@@ -1,23 +1,15 @@
 import psycopg2
 from psycopg2 import pool, OperationalError
-import os
-from dotenv import load_dotenv
 from GlobalHelpers.logger import get_logger
+from GlobalHelpers.config import settings
 
 log = get_logger(__name__)
 
-load_dotenv()
 
 class DB:
 
     def __init__(self, minconn: int = 2, maxconn: int = 10):
-        self.connection_string = (
-            "postgresql://"
-            + os.getenv("DB_USER") + ":"
-            + os.getenv("DB_PASSWORD")
-            + "@localhost:5432/"
-            + os.getenv("DB_NAME")
-        )
+        self.connection_string = settings.db_connection_string
         self._pool: psycopg2.pool.ThreadedConnectionPool | None = None
         self._minconn = minconn
         self._maxconn = maxconn

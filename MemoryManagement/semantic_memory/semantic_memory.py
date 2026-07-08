@@ -31,6 +31,7 @@ class SemanticMemory:
         if not ready or chroma_module.semantic_memory_db is None:
             log.warning("ChromaDB never became ready — lifecycle skipped.")
             return
+        self._db = chroma_module.semantic_memory_db
         memory_lifecycle.start(chroma_module.semantic_memory_db)
     # ---------------------------------------------------------------- write
 

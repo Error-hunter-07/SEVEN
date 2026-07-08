@@ -10,11 +10,11 @@ We NEVER embed raw chat logs.  We embed distilled fact sentences only.
 from __future__ import annotations
 
 import json
-import os
 import requests
 
 from MemoryManagement.semantic_memory.semantic_memory import semantic_memory  # FIX 2: singleton
 from GlobalHelpers.logger import get_logger
+from GlobalHelpers.config import settings
 
 log = get_logger(__name__)
 
@@ -42,6 +42,65 @@ Example output:
 If there is nothing worth remembering, respond with an empty array: []
 """
 
+def extract_and_store_batch(turns: list[tuple[str, str]]) -> None:
+    """
+    Same as extract_and_store, but takes a list of (user_msg, assistant_reply)
+    turns accumulated during a cooldown window and extracts facts from all of
+    them in ONE LLM call instead of dropping them.
+    """
+    turns = [t for t in turns if t[0] or t[1]]
+    if not turns:
+        return
+
+    # Concatenate turns into one conversation snippet, in order
+    conversation_snippet = "\n".join(
+        f"User: {u}\nAssistant: {_strip_tool_calls(a)}"
+        for u, a in turns
+    )
+
+    # Guard against unbounded prompt growth 
+    MAX_SNIPPET_CHARS = 6000
+    if len(conversation_snippet) > MAX_SNIPPET_CHARS:
+        conversation_snippet = conversation_snippet[-MAX_SNIPPET_CHARS:]
+
+    facts = _extract_facts_from_snippet(conversation_snippet)
+    for fact in facts:
+        memory_text = fact.get("memory", "").strip()
+        if not memory_text:
+            continue
+        semantic_memory.store(
+            text=memory_text,
+            importance=float(fact.get("importance", 0.5)),
+            category=fact.get("category", "other"),
+            source="conversation",
+        )
+
+# Refactor _extract_facts to take a pre-built snippet, so both
+# extract_and_store and extract_and_store_batch can share it:
+def _extract_facts_from_snippet(conversation_snippet: str) -> list[dict]:
+    try:
+        response = requests.post(
+            "http://127.0.0.1:8081/v1/chat/completions",
+            json={
+                "model": os.getenv("LLM_MODEL"),
+                "messages": [
+                    {"role": "system", "content": _EXTRACTION_SYSTEM},
+                    {"role": "user", "content": conversation_snippet},
+                ],
+                "temperature": 0.2,
+                "max_tokens": 512,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        raw_text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "[]")
+        return _parse_json_array(raw_text)
+    except requests.exceptions.RequestException as e:
+        log.error("LLM call failed: %s", e, exc_info=True)
+        return []
+    except Exception as e:
+        log.error("Unexpected error: %s", e, exc_info=True)
+        return []
 
 def extract_and_store(user_message: str, assistant_reply: str) -> None:
     """
