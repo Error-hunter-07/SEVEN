@@ -120,7 +120,8 @@ registry.register(
         parameters={
             "text":       "str - A self-contained fact sentence about the user.",
             "importance": "float - 0.0 to 1.0. Use 0.8+ for identity/goals, 0.5 for general info.",
-            "category":   "str - One of: identity, education, interests, goals, preferences, experience, relationships, other."
+            "category":   "str - One of: identity, education, interests, goals, preferences, experience, relationships, other.",
+            "polarity":   "str - One of: positive (user likes/wants), negative (user dislikes/avoids), neutral (factual)."
         },
         func=semantic_memory_tool.store_semantic_memory
     )

@@ -9,4 +9,5 @@ VectorStore*
 # Sentence transformer model cache
 .cache/
 
-logs/*
+# Log files and session logs
+logs/

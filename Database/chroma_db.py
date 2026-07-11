@@ -1,4 +1,5 @@
 import os
+import logging
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -8,6 +9,11 @@ _cache = os.path.join(_project_root, ".cache", "st")
 os.makedirs(_cache, exist_ok=True)
 os.environ["SENTENCE_TRANSFORMERS_HOME"] = _cache
 os.environ["HF_HOME"] = _cache
+
+# Suppress progress bars from sentence-transformers/transformers
+# This must be set globally at module level, before ChromaClient init
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.WARNING)
 
 from VectorDBClient.ChromaClient import ChromaClient
 import threading
