@@ -1,8 +1,47 @@
+import re
+
 import MemoryManagement.shortterm_memory.scratchpad as scratchpad
 import MemoryManagement.shortterm_memory.summarizer as summarizer
 from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
+
+def _coerce_subtask_list(value):
+    """
+    BUG FIX: update_scratchpad_state's tool schema forces `value` to type
+    "string" (see _build_tool_schema in llm_client.py, which has no concept
+    of array types), so the LLM can only ever send subtasks as one long
+    string like "1. Do X. 2. Do Y. 3. Do Z." — never a real list.
+ 
+    summarizer.py does "\n".join(subtasks) expecting a list. Joining a
+    plain string puts a newline between every CHARACTER, not every item —
+    that's the letter-per-line output seen in production logs.
+ 
+    This normalizes whatever comes in (already a list, a numbered string,
+    a newline-separated string, or a single bare string) into a real list
+    of individual subtask strings.
+    """
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if not isinstance(value, str):
+        return []
+ 
+    text = value.strip()
+    if not text:
+        return []
+ 
+    # Try numbered list markers first: "1. ", "2. ", etc.
+    items = [i.strip().rstrip(".") for i in re.split(r"\d+\.\s*", text) if i.strip()]
+    if len(items) > 1:
+        return items
+ 
+    # Fallback: newline-separated
+    items = [i.strip() for i in text.split("\n") if i.strip()]
+    if len(items) > 1:
+        return items
+ 
+    # Last resort: treat the whole string as a single subtask
+    return [text]
 
 
 _ALLOWED_KEYS = {
@@ -103,6 +142,12 @@ def update_scratchpad_state(section, key, value):
             f"Invalid key '{key}' for section '{section}'. "
             f"Allowed keys: {sorted(allowed)}"
         )
+    
+    # BUG FIX: subtasks/completed_subtasks must always be a list — the LLM
+    # can only send strings through this tool's schema, so normalize here
+    # rather than trusting the caller. See _coerce_subtask_list docstring.
+    if section == "planning" and key in ("subtasks", "completed_subtasks"):
+        value = _coerce_subtask_list(value)
 
     scratchpad.scratchpad.state[section][key] = value
     scratchpad.scratchpad.add_tool_output(

@@ -5,77 +5,67 @@ from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
 
-
-def execute_tool_calls(text: str = "", native_tool_calls: list = None) -> None:
-    """
-    Handles both tool call formats:
-
-    Format 1 — tag format (model replied in plain text with embedded tags):
-        <tool_call>
-        {"tool": "update_scratchpad_state", "arguments": {...}}
-        </tool_call>
-        Parsed from `text` by the existing parser.
-
-    Format 2 — native API format (finish_reason=tool_calls, content is empty):
-        message["tool_calls"] = [
-            {"type": "function", "function": {"name": "...", "arguments": "..."}, "id": "..."}
-        ]
-        Passed directly as `native_tool_calls`.
-
-    Either or both can be present in a single turn. Both are executed.
-    """
-
-    # ── Format 1: parse <tool_call> tags from text ───────────────────────────
+def execute_tool_calls(text: str = "", native_tool_calls: list = None) -> dict:
+    """Returns {tool_call_id: result_string} for native calls, so callers
+    can feed real tool output back to the model instead of a placeholder."""
+    results = {}
     tag_calls = parse_tool_calls(text) if text else []
 
-    # ── Format 2: parse native API tool_calls list ───────────────────────────
     api_calls = []
     for tc in (native_tool_calls or []):
-        fn       = tc.get("function", {})
-        name     = fn.get("name", "")
+        fn = tc.get("function", {})
+        name = fn.get("name", "")
         args_raw = fn.get("arguments", "{}")
+        call_id = tc.get("id", "")
         if not name:
             continue
         try:
             args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
         except json.JSONDecodeError:
             args = {}
-        api_calls.append({"tool": name, "arguments": args})
+        api_calls.append({"tool": name, "arguments": args, "call_id": call_id})
 
-    # ── Execute all calls in order: tag calls first, then API calls ──────────
-    for call in tag_calls + api_calls:
+    for call in tag_calls:
         _run_call(call)
+    for call in api_calls:
+        result_str = _run_call(call)
+        if call.get("call_id"):
+            results[call["call_id"]] = result_str
+
+    return results
 
 
-def _run_call(call: dict) -> None:
+def _run_call(call: dict) -> str:
     tool_name = call.get("tool")
     if not tool_name:
-        return
+        return "No tool name given."
 
     tool = registry.get_tool(tool_name)
     if tool is None:
         log.warning("Unknown tool: '%s'", tool_name)
-        return
+        return f"Unknown tool: {tool_name}"
 
     arguments = call.get("arguments") or {}
     if not isinstance(arguments, dict):
         arguments = {}
 
-    if tool.parameters:
-        normalized_args = {
-            name: arguments.get(name)
-            for name in tool.parameters
-            if name in arguments
-        }
+    normalized_args = {
+        name: arguments.get(name)
+        for name in (tool.parameters or {})
+        if name in arguments
+    } if tool.parameters else {}
+
+    try:
+        result = tool.func(**normalized_args)
+    except TypeError:
         try:
-            tool.func(**normalized_args)
+            result = tool.func()
         except TypeError:
-            try:
-                tool.func()
-            except TypeError:
-                log.error("Failed to call '%s' with args %s", tool_name, normalized_args)
-    else:
-        try:
-            tool.func()
-        except TypeError:
-            log.error("Failed to call '%s' (no params)", tool_name)
+            log.error("Failed to call '%s' with args %s", tool_name, normalized_args)
+            return f"Failed to call {tool_name}."
+
+    if result is None:
+        return "Done."
+    if isinstance(result, (dict, list)):
+        return json.dumps(result, default=str)[:2000]
+    return str(result)[:2000]

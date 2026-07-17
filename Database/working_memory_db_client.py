@@ -107,6 +107,10 @@ def get_working_memory(session_id):
 
 
 def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None,tags=None):
+    if not memory_id:
+        log.warning("update_working_memory: called with no memory_id — refusing to run a no-op update.")
+        return False
+
     connection = conn_pool.get_connection()
     if connection is None:
         log.warning("update_working_memory: Failed to get connection from pool.")
@@ -149,6 +153,10 @@ def update_working_memory(memory_id, key=None, value=None, priority=None, releva
                 WHERE id = %s::uuid;
             """
             cursor.execute(update_query, (*update_values, memory_id))
+            if cursor.rowcount == 0:
+                log.warning("update_working_memory: no row matched id=%s — nothing was updated.", memory_id)
+                connection.rollback()
+                return False
             connection.commit()
             return True
     except Exception as e:

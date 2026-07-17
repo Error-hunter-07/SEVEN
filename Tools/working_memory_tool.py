@@ -51,21 +51,30 @@ def get_all_working_memory_current_session():
     return all_working_memory
 
 
-def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None,tags=None):
-    working_memory_db_client.update_working_memory(
-        memory_id,
-        key,
-        value,
-        priority,
-        relevance,
-        expires_at,
-        source,
-        tags
+def update_working_memory(memory_id, key=None, value=None, priority=None,
+                           relevance=None, expires_at=None, source=None, tags=None):
+    if not memory_id:
+        log.warning("update_working_memory called with no memory_id — inserting instead.")
+        result = insert_working_memory(
+            memory_type="working_memory", key=key, value=value,
+            priority=priority or 0.5, relevance=relevance or 0.5,
+            source=source, tags=tags,
+        )
+        scratchpad_tool.add_scratchpad_tool_output(
+            "update_working_memory",
+            f"No memory_id given — inserted new entry instead, id={result}"
+        )
+        return result
+
+    success = working_memory_db_client.update_working_memory(
+        memory_id, key, value, priority, relevance, expires_at, source, tags
     )
     scratchpad_tool.add_scratchpad_tool_output(
         "update_working_memory",
-        f"Updated working memory with ID: {memory_id}"
+        f"Updated working memory ID: {memory_id}" if success
+        else f"FAILED to update working memory ID: {memory_id} (no matching row)"
     )
+    return success
 
 def add_scratchpad_memory_update_flat(memory_type, key=None, value=None,
                                        priority=0.5, relevance=0.5,

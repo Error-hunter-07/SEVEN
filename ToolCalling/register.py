@@ -70,9 +70,12 @@ registry.register(
     Tool(
         name="add_scratchpad_memory_update",
         description=(
-            "Inserts or updates a working memory entry. "
-            "Set update=False to insert, update=True to update by memory_id."
-        ),
+                "Inserts or updates a working memory entry. "
+                "Default to update=False (insert) for anything new. "
+                "Only set update=True if you already hold a real memory_id returned "
+                "from a previous get_working_memory or get_all_working_memory call — "
+                "never guess or invent a memory_id."
+            ),
         parameters={
             "memory_type": "str - always pass 'working_memory'",
             "key": "str - the key name for this memory entry",

@@ -4,10 +4,25 @@ import os
 import contextvars
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+import sys
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 SESSION_DIR = os.path.join(LOG_DIR, "sessions")
 os.makedirs(SESSION_DIR, exist_ok=True)
+
+# BUG FIX: on Windows, sys.stdout/sys.stderr default to the legacy console
+# codepage (cp1252), which can't represent characters like ₹ (U+20B9),
+# emoji, or many non-English scripts. Any log message containing such a
+# character crashes the console handler with UnicodeEncodeError.
+# Reconfigure both streams to UTF-8 with errors="replace" so an
+# unencodable character degrades to a substitute glyph instead of
+# crashing the whole logging call (and therefore the whole turn).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass  # best-effort — don't let a console quirk block startup
 
 # session_id is set once per process (SessionManager) and auto-injected into every log line
 _session_id_ctx = contextvars.ContextVar("session_id", default="no-session")
@@ -24,11 +39,17 @@ _FORMAT = "%(asctime)s | %(session_id)s | %(levelname)-8s | %(name)s | %(message
 _formatter = logging.Formatter(_FORMAT)
 
 def _build_root_handlers():
-    app_handler = RotatingFileHandler(os.path.join(LOG_DIR, "app.log"), maxBytes=5_000_000, backupCount=5)
+
+    # BUG FIX: encoding="utf-8" explicitly on every file handler.
+    # Without this, these also default to cp1252 on Windows and would
+    # crash on the exact same class of characters as the console handler —
+    # just less visibly, since a file-write crash inside logging's own
+    # error handling doesn't always surface the same way in the terminal.
+    app_handler = RotatingFileHandler(os.path.join(LOG_DIR, "app.log"), maxBytes=5_000_000, backupCount=5, encoding="utf-8")
     app_handler.setLevel(logging.INFO)
     app_handler.setFormatter(_formatter)
 
-    error_handler = RotatingFileHandler(os.path.join(LOG_DIR, "errors.log"), maxBytes=5_000_000, backupCount=5)
+    error_handler = RotatingFileHandler(os.path.join(LOG_DIR, "errors.log"), maxBytes=5_000_000, backupCount=5, encoding="utf-8")
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(_formatter)
 
@@ -56,7 +77,9 @@ def attach_session_file_handler(session_id: str) -> RotatingFileHandler:
     """Call this from on_session_start. Adds a 3rd, per-session file."""
     date_str = datetime.now().strftime("%Y-%m-%d")
     path = os.path.join(SESSION_DIR, f"session_{session_id}_{date_str}.log")
-    handler = logging.FileHandler(path)
+    # BUG FIX: encoding="utf-8" here too — same reasoning as the two
+    # handlers above.
+    handler = logging.FileHandler(path, encoding="utf-8")
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(_formatter)
     handler.addFilter(_SessionFilter())
