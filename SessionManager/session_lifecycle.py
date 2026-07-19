@@ -101,9 +101,6 @@ def on_session_end(session_id: str) -> None:
     scratchpad.reset()
     log.info("Session %s ended — scratchpad promoted and cleared.", session_id)
 
-    scratchpad.reset()
-    log.info("Session %s ended — scratchpad promoted and cleared.", session_id)
-
 
 
 

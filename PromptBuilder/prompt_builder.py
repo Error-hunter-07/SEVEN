@@ -44,6 +44,7 @@ unsure it also deserves semantic memory.
  
 WHEN TO USE TOOLS:
 - Any task/request → update_scratchpad_state planning.current_goal
+- User asks for a personalized suggestion/recommendation ("you know me", "what would I like", "pick for me") → search_semantic_memory BEFORE answering, don't guess
 - Multi-step task → update_scratchpad_state planning.subtasks
 - User states any concrete fact you may need again this session (name, numbers, location, decisions, constraints) → add_scratchpad_memory_update (update=False)
 - User shares personal info (name, skills, project, preferences) → add_scratchpad_memory_update AND store_semantic_memory
