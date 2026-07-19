@@ -70,9 +70,12 @@ registry.register(
     Tool(
         name="add_scratchpad_memory_update",
         description=(
-            "Inserts or updates a working memory entry. "
-            "Set update=False to insert, update=True to update by memory_id."
-        ),
+                "Inserts or updates a working memory entry. "
+                "Default to update=False (insert) for anything new. "
+                "Only set update=True if you already hold a real memory_id returned "
+                "from a previous get_working_memory or get_all_working_memory call — "
+                "never guess or invent a memory_id."
+            ),
         parameters={
             "memory_type": "str - always pass 'working_memory'",
             "key": "str - the key name for this memory entry",
@@ -120,7 +123,8 @@ registry.register(
         parameters={
             "text":       "str - A self-contained fact sentence about the user.",
             "importance": "float - 0.0 to 1.0. Use 0.8+ for identity/goals, 0.5 for general info.",
-            "category":   "str - One of: identity, education, interests, goals, preferences, experience, relationships, other."
+            "category":   "str - One of: identity, education, interests, goals, preferences, experience, relationships, other.",
+            "polarity":   "str - One of: positive (user likes/wants), negative (user dislikes/avoids), neutral (factual)."
         },
         func=semantic_memory_tool.store_semantic_memory
     )

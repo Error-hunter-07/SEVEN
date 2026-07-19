@@ -1,4 +1,5 @@
 import os
+import logging
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -9,14 +10,17 @@ os.makedirs(_cache, exist_ok=True)
 os.environ["SENTENCE_TRANSFORMERS_HOME"] = _cache
 os.environ["HF_HOME"] = _cache
 
+# Suppress progress bars from sentence-transformers/transformers
+# This must be set globally at module level, before ChromaClient init
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.WARNING)
+
 from VectorDBClient.ChromaClient import ChromaClient
-from dotenv import load_dotenv
 import threading
 from GlobalHelpers.logger import get_logger
+from GlobalHelpers.config import settings
 
 log = get_logger(__name__)
-
-load_dotenv()
 
 semantic_memory_db = None
 _chroma_ready = threading.Event()
@@ -26,8 +30,8 @@ def _init_chroma():
     try:
         semantic_memory_db = ChromaClient(
             collection_name="semantic_memory",
-            persist_dir=os.getenv("DEFAULT_PERSIST_DIR"),
-            embedding_model=os.getenv("DEFAULT_EMBEDDING_MODEL"),
+            persist_dir=settings.default_persist_dir,
+            embedding_model=settings.default_embedding_model,
             distance_fn="cosine",
         )
         # print(f"[ChromaClient] 'semantic_memory' ready — {semantic_memory_db.count()} memories")

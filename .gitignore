@@ -8,3 +8,8 @@ VectorStore*
 
 # Sentence transformer model cache
 .cache/
+
+# Log files and session logs
+logs/
+
+data/

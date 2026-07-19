@@ -1,207 +1,206 @@
+"""
+Database/working_memory_db_client.py
+
+MIGRATED: was Postgres, now embedded SQLite (Database/local_db.py).
+
+ADDED: TTL-based expiry to prevent unbounded growth. SQLite has no
+time-based triggers (CREATE TRIGGER only fires on row events, not on a
+clock), so expiry is enforced at the application level, in three parts:
+
+  1. Every insert sets expires_at = now + WORKING_MEMORY_TTL_DAYS unless
+     the caller explicitly provides one.
+  2. Every update to a row REFRESHES expires_at — if you're still
+     touching it, it's still relevant, so its clock resets (unless the
+     caller explicitly overrides expires_at).
+  3. Every read query filters out rows past their expires_at, so an
+     expired memory never resurfaces even before cleanup has run.
+
+Actual deletion of expired rows (so the DB file doesn't grow forever)
+happens in Database/working_memory_lifecycle.py, run at startup —
+mirroring the existing MemoryManagement/semantic_memory/memory_lifecycle.py
+decay/prune pattern.
+"""
+
 import json
-from multiprocessing.dummy import connection
-from Database import db
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import Database.local_db as local_db
 from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
 
-conn_pool = db.DB()
+WORKING_MEMORY_TTL_DAYS = 60  # ~2 months
 
 
-# This is the SQL schema for the working_memory table in PostgreSQL. It defines the structure of the table, including the columns, their data types, and constraints. The table is designed to store information related to working memory, such as session ID, memory type, key-value pairs, priority, relevance, timestamps, source, tags, access count, and active status.
-# CREATE TABLE IF NOT EXISTS public.working_memory
-# (
-#     id uuid NOT NULL,
-#     session_id uuid,
-#     memory_type character varying(50) COLLATE pg_catalog."default",
-#     key text COLLATE pg_catalog."default",
-#     value jsonb,
-#     priority double precision DEFAULT 0.5,
-#     relevance double precision DEFAULT 0.5,
-#     created_at timestamp without time zone,
-#     updated_at timestamp without time zone,
-#     expires_at timestamp without time zone,
-#     source text COLLATE pg_catalog."default",
-#     tags text[] COLLATE pg_catalog."default",
-#     access_count integer DEFAULT 0,
-#     last_accessed timestamp without time zone,
-#     active boolean DEFAULT true,
-#     CONSTRAINT working_memory_pkey PRIMARY KEY (id)
-# )
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def insert_working_memory(session_id, memory_type, key, value, priority=0.5,relevance=0.5, source=None, tags=None):
-    connection = conn_pool.get_connection()
-    if connection is None:
-        log.warning("insert_working_memory: Failed to get connection from pool.")
-        return None
+def _default_expiry() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=WORKING_MEMORY_TTL_DAYS)).isoformat()
 
+
+def _row_to_tuple(row) -> tuple:
+    """Preserves the same positional-tuple shape callers already expect:
+    (id, memory_type, key, value, priority, relevance, created_at,
+     updated_at, expires_at, source, tags)."""
+    return (
+        row["id"],
+        row["memory_type"],
+        row["key"],
+        json.loads(row["value"]) if row["value"] is not None else None,
+        row["priority"],
+        row["relevance"],
+        row["created_at"],
+        row["updated_at"],
+        row["expires_at"],
+        row["source"],
+        json.loads(row["tags"]) if row["tags"] else None,
+    )
+
+
+def insert_working_memory(session_id, memory_type, key, value, priority=0.5, relevance=0.5, source=None, tags=None, expires_at=None):
+    conn = local_db.get_connection()
+    new_id = str(uuid.uuid4())
+    now = _now()
+    if expires_at is None:
+        expires_at = _default_expiry()
     try:
-        with connection.cursor() as cursor:
-            insert_query = """
-                INSERT INTO public.working_memory (
-                    id, session_id, memory_type, key, value,
-                    priority, relevance,
-                    created_at, updated_at, expires_at,
-                    source, tags
-                )
-                VALUES (
-                    gen_random_uuid(),
-                    %s, %s, %s, %s::jsonb,
-                    %s, %s,
-                    NOW(), NOW(), %s,
-                    %s, %s
-                )
-                RETURNING id;
+        conn.execute(
             """
-            cursor.execute(
-                insert_query,
-                (
-                    session_id,
-                    memory_type,
-                    key,
-                    json.dumps(value),
-                    priority,
-                    relevance,
-                    None,
-                    source,
-                    tags
-                )
-            )
-            row = cursor.fetchone()
-            new_id = row[0] if row else None
-            connection.commit()
-            return new_id
+            INSERT INTO working_memory (
+                id, session_id, memory_type, key, value,
+                priority, relevance, created_at, updated_at, expires_at,
+                source, tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id, session_id, memory_type, key, json.dumps(value),
+                priority, relevance, now, now, expires_at,
+                source, json.dumps(tags) if tags is not None else None,
+            ),
+        )
+        conn.commit()
+        return new_id
     except Exception as e:
         log.error("insert_working_memory error: %s: %s", type(e).__name__, e, exc_info=True)
-        connection.rollback()
+        conn.rollback()
         return None
-    finally:
-        conn_pool.put_connection(connection)
 
 
 def get_working_memory(session_id):
-    connection = conn_pool.get_connection()
-    if connection is None:
-        log.warning("get_working_memory: Failed to get connection from pool.")
-        return None
-
+    conn = local_db.get_connection()
+    now = _now()
     try:
-        with connection.cursor() as cursor:
-            select_query = """
-                SELECT id, memory_type, key, value, priority, relevance,
-                       created_at, updated_at, expires_at, source, tags
-                FROM public.working_memory
-                WHERE session_id = %s AND active = true
-                ORDER BY created_at DESC
-                LIMIT 1;
+        cur = conn.execute(
             """
-            cursor.execute(select_query, (session_id,))
-            results = cursor.fetchall()
-            return results
+            SELECT id, memory_type, key, value, priority, relevance,
+                   created_at, updated_at, expires_at, source, tags
+            FROM working_memory
+            WHERE session_id = ? AND active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_id, now),
+        )
+        return [_row_to_tuple(r) for r in cur.fetchall()]
     except Exception as e:
         log.error("get_working_memory error: %s", e, exc_info=True)
         return None
-    finally:
-        conn_pool.put_connection(connection)
 
 
-def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None,tags=None):
-    connection = conn_pool.get_connection()
-    if connection is None:
-        log.warning("update_working_memory: Failed to get connection from pool.")
+def update_working_memory(memory_id, key=None, value=None, priority=None, relevance=None, expires_at=None, source=None, tags=None):
+    """
+    Same failure-detection fix carried over from the Postgres version:
+    refuses a no-op update when memory_id is missing, and checks
+    cursor.rowcount to detect an update that matched zero rows.
+
+    TTL: unless the caller explicitly passes expires_at, every update
+    refreshes it to now + WORKING_MEMORY_TTL_DAYS — a row that's still
+    being actively updated shouldn't decay just because it was created
+    a while ago.
+    """
+    if not memory_id:
+        log.warning("update_working_memory: called with no memory_id — refusing to run a no-op update.")
         return False
 
+    conn = local_db.get_connection()
     try:
-        with connection.cursor() as cursor:
-            update_fields = []
-            update_values = []
+        fields = []
+        values = []
 
-            if key is not None:
-                update_fields.append("key = %s")
-                update_values.append(key)
-            if value is not None:
-                update_fields.append("value = %s::jsonb")
-                update_values.append(json.dumps(value))
-            if priority is not None:
-                update_fields.append("priority = %s")
-                update_values.append(priority)
-            if relevance is not None:
-                update_fields.append("relevance = %s")
-                update_values.append(relevance)
-            if expires_at is not None:
-                update_fields.append("expires_at = %s")
-                update_values.append(expires_at)
-            if source is not None:
-                update_fields.append("source = %s")
-                update_values.append(source)
-            if tags is not None:
-                update_fields.append("tags = %s")
-                update_values.append(tags)
+        if key is not None:
+            fields.append("key = ?")
+            values.append(key)
+        if value is not None:
+            fields.append("value = ?")
+            values.append(json.dumps(value))
+        if priority is not None:
+            fields.append("priority = ?")
+            values.append(priority)
+        if relevance is not None:
+            fields.append("relevance = ?")
+            values.append(relevance)
+        if source is not None:
+            fields.append("source = ?")
+            values.append(source)
+        if tags is not None:
+            fields.append("tags = ?")
+            values.append(json.dumps(tags))
 
-            if not update_fields:
-                log.warning("update_working_memory: No fields to update.")
-                return False
+        # TTL refresh: explicit expires_at wins; otherwise auto-renew
+        # whenever the row is touched at all.
+        if expires_at is not None:
+            fields.append("expires_at = ?")
+            values.append(expires_at)
+        elif fields:
+            fields.append("expires_at = ?")
+            values.append(_default_expiry())
 
-            update_query = f"""
-                UPDATE public.working_memory
-                SET {', '.join(update_fields)}, updated_at = NOW()
-                WHERE id = %s::uuid;
-            """
-            cursor.execute(update_query, (*update_values, memory_id))
-            connection.commit()
-            return True
+        if not fields:
+            log.warning("update_working_memory: No fields to update.")
+            return False
+
+        fields.append("updated_at = ?")
+        values.append(_now())
+        values.append(memory_id)
+
+        cur = conn.execute(
+            f"UPDATE working_memory SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+
+        if cur.rowcount == 0:
+            log.warning("update_working_memory: no row matched id=%s — nothing was updated.", memory_id)
+            conn.rollback()
+            return False
+
+        conn.commit()
+        return True
     except Exception as e:
         log.error("update_working_memory error: %s", e, exc_info=True)
-        connection.rollback()
+        conn.rollback()
         return False
-    finally:
-        conn_pool.put_connection(connection)
 
 
 def get_all_current_session_working_memory(session_id):
-    connection = conn_pool.get_connection()
-    if connection is None:
-        log.warning("get_all_current_session_working_memory: Failed to get connection from pool.")
-        return None
-
+    conn = local_db.get_connection()
+    now = _now()
     try:
-        with connection.cursor() as cursor:
-            select_query = """
-                SELECT id, memory_type, key, value, priority, relevance,
-                       created_at, updated_at, expires_at, source, tags
-                FROM public.working_memory
-                WHERE session_id = %s AND active = true
-                ORDER BY created_at DESC;
+        cur = conn.execute(
             """
-            cursor.execute(select_query, (session_id,))
-            results = cursor.fetchall()
-            return results
+            SELECT id, memory_type, key, value, priority, relevance,
+                   created_at, updated_at, expires_at, source, tags
+            FROM working_memory
+            WHERE session_id = ? AND active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY created_at DESC
+            """,
+            (session_id, now),
+        )
+        return [_row_to_tuple(r) for r in cur.fetchall()]
     except Exception as e:
         log.error("get_all_current_session_working_memory error: %s", e, exc_info=True)
         return None
-    finally:
-        conn_pool.put_connection(connection)
-
-# def delete_working_memory(memory_id):
-#     connection = conn.connect()
-#     if connection is None:
-#         print("Failed to connect to the database.")
-#         return False
-
-#     try:
-#         with connection.cursor() as cursor:
-#             delete_query = """
-#                 UPDATE public.working_memory
-#                 SET active = false, updated_at = NOW()
-#                 WHERE id = %s::uuid;
-#             """
-#             cursor.execute(delete_query, (memory_id,))
-#             connection.commit()
-#             return True
-#     except Exception as e:
-#         print(f"An error occurred while deleting working memory: {e}")
-#         connection.rollback()
-#         return False
-#     finally:
-#         connection.close()

@@ -19,6 +19,7 @@ def store_semantic_memory(
     text: str,
     importance: float = 0.5,
     category: str     = "other",
+    polarity: str     = "neutral",
 ) -> str | None:
     """
     Store a distilled long-term memory fact.
@@ -28,6 +29,8 @@ def store_semantic_memory(
         importance: 0.0–1.0. Use 0.8+ for identity/goals, 0.5 for general facts.
         category:   One of: identity, education, interests, goals,
                     preferences, experience, relationships, other.
+        polarity:   One of: positive (user likes/wants), negative (user dislikes/avoids),
+                    neutral (factual, no preference signal).
 
     Returns:
         The new memory id on success, None on failure.
@@ -36,6 +39,7 @@ def store_semantic_memory(
         text=text,
         importance=importance,
         category=category,
+        polarity=polarity,
         source="llm_tool_call",
     )
     scratchpad_tool.add_scratchpad_tool_output(

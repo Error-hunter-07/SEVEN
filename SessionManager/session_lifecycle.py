@@ -23,7 +23,9 @@ def on_session_end(session_id: str) -> None:
         )
     
     # 2. Promote completed subtasks as experience
-    for task in scratchpad.get_completed_subtasks()[:3]:
+    completed_subtasks = scratchpad.get_completed_subtasks()
+
+    for task in completed_subtasks[:3]:
         if task and len(str(task)) > 5:
             semantic_memory.store(
                 text=f"User completed task: {task}",
@@ -55,6 +57,47 @@ def on_session_end(session_id: str) -> None:
             source="session_end"
         )
 
+    # 5. BUG FIX: working memory was almost never populated, because it
+    # only ever got written if the LLM proactively called
+    # add_scratchpad_memory_update mid-conversation — which it rarely did,
+    # since the system prompt never explained what working memory is FOR.
+    # Now, regardless of whether the LLM used the tool during the session,
+    # always persist a structured session summary into working memory too
+    # — the same safety-net pattern already used for semantic memory above.
+    #
+    # This is separate from the semantic-memory promotion: semantic memory
+    # holds durable cross-session facts, working memory holds this
+    # session's scratch state (goal, what got done, what broke) so a
+    # continuation of THIS session (or a quick lookup via
+    # get_all_working_memory) has something concrete to read even when
+    # the LLM never called the bridge tool itself.
+    try:
+        import Tools.working_memory_tool as working_memory_tool
+ 
+        summary_parts = []
+        if goal:
+            summary_parts.append(f"Goal: {goal}")
+        if completed_subtasks:
+            summary_parts.append(
+                "Completed: " + "; ".join(str(t) for t in completed_subtasks[:5])
+            )
+        if last_error:
+            summary_parts.append(f"Last error: {str(last_error)[:200]}")
+ 
+        if summary_parts:
+            result = working_memory_tool.insert_working_memory(
+                memory_type="session_summary",
+                key="session_summary",
+                value=" | ".join(summary_parts),
+                priority=0.6,
+                relevance=0.6,
+                source="session_end",
+            )
+            if result is None:
+                log.warning("Session-end working memory summary failed to insert.")
+    except Exception:
+        log.exception("Failed to write session-end working memory summary (non-fatal).")
+ 
     scratchpad.reset()
     log.info("Session %s ended — scratchpad promoted and cleared.", session_id)
 
