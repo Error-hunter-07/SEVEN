@@ -11,3 +11,5 @@ VectorStore*
 
 # Log files and session logs
 logs/
+
+data/
