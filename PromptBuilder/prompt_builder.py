@@ -43,6 +43,9 @@ doubt, store to working memory (cheap, session-scoped) even if you're
 unsure it also deserves semantic memory.
  
 WHEN TO USE TOOLS:
+- Task complete / topic done → update_scratchpad_summary
+- Error or failure → update_scratchpad_state execution.last_error
+- Multi-step task in progress → periodically check in with the user ("Should I mark [subtask] as done?") rather than silently guessing — only call update_scratchpad_state planning.completed_subtasks once the user confirms
 - Any task/request → update_scratchpad_state planning.current_goal
 - User asks for a personalized suggestion/recommendation ("you know me", "what would I like", "pick for me") → search_semantic_memory BEFORE answering, don't guess
 - Multi-step task → update_scratchpad_state planning.subtasks

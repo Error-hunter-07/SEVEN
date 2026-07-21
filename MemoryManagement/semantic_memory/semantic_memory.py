@@ -13,6 +13,7 @@ from Database.chroma_db import semantic_memory_db
 from VectorDBClient.VectorClient import VectorDBClient
 
 from MemoryManagement.semantic_memory import memory_lifecycle
+import SessionManager.session_memory_tracker as session_memory_tracker
 from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
@@ -152,6 +153,13 @@ class SemanticMemory:
         )
         if success:
             log.debug("Stored memory [%s] %s", category, text[:80])
+            # Only genuinely NEW memories get recorded here — the two
+            # dedup paths above return early with an EXISTING id, which
+            # likely already belongs to some earlier episode's
+            # related_semantic_memory_ids, so re-attributing it to
+            # whichever session happened to touch it again would make
+            # that link noisy rather than useful.
+            session_memory_tracker.record(mem_id)
             return mem_id
         return None
 

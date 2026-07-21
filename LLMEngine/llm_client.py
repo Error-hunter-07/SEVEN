@@ -43,6 +43,8 @@ import LLMEngine.history_manager as history_manager
 import LLMEngine.tool_schema as tool_schema
 import LLMEngine.extraction_worker as extraction_worker
 import MemoryManagement.working_memory.memory_lifecycle as working_memory_lifecycle
+import MemoryManagement.episodic_memory.memory_lifecycle as episodic_memory_lifecycle
+import Database.active_sessions_db_client as active_sessions_db_client
 
 # Configure logging once for the process before other components initialize
 configure_logging()
@@ -66,6 +68,7 @@ try:
     on_session_start(session_id)
     extraction_worker.start()
     working_memory_lifecycle.start() #Added working memory lifecycle pruning at startup
+    episodic_memory_lifecycle.start() #Added episodic memory decay-by-summarization at startup
 except Exception:
     log.exception("Failed to start LLM process")
 
@@ -215,6 +218,15 @@ def ask_llm(query: str) -> str | None:
         full_assistant_activity = f"{text} {tool_summary}".strip()
 
         extraction_worker.queue_turn(query, full_assistant_activity)
+
+         # Durable turn counter for episodic memory — see
+        # Database/active_sessions_db_client.py. Written to SQLite (WAL
+        # mode) so it survives a crash even though history_manager's
+        # message list itself is only ever in-memory.
+        try:
+            active_sessions_db_client.heartbeat(process_manager.session_id)
+        except Exception:
+            log.exception("Failed to update active_sessions heartbeat (non-fatal).")
 
         log.debug(get_scratchpad_memory())
         return parsed_response
