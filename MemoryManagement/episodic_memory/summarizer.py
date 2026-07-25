@@ -103,7 +103,7 @@ def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 400)
             timeout=_REQUEST_TIMEOUT,
         )
         response.raise_for_status()
-        raw_text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "{}")
+        raw_text = response.json().get("choices", [{}])[0].get("message", {}).get("content") or "{}"
         return _parse_json_object(raw_text)
     except Exception as e:
         log.error("Episodic summarizer LLM call failed: %s", e, exc_info=True)

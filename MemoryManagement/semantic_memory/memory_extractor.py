@@ -100,7 +100,7 @@ def _extract_facts_from_snippet(conversation_snippet: str) -> list[dict]:
             timeout=30,
         )
         response.raise_for_status()
-        raw_text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "[]")
+        raw_text = response.json().get("choices", [{}])[0].get("message", {}).get("content") or "[]"
         return _parse_json_array(raw_text)
     except requests.exceptions.RequestException as e:
         log.error("LLM call failed: %s", e, exc_info=True)
@@ -170,7 +170,7 @@ def _extract_facts(user_message: str, assistant_reply: str) -> list[dict]:
             response.json()
             .get("choices", [{}])[0]
             .get("message", {})
-            .get("content", "[]")
+            .get("content") or "[]"
         )
         return _parse_json_array(raw_text)
 
