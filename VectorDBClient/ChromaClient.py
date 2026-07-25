@@ -104,6 +104,49 @@ class ChromaClient(VectorDBClient):
             log.error("get error: %s", e, exc_info=True)
             return None
 
+    def get_many(self, ids: list[str]) -> list[dict]:
+        """Fetches multiple specific entries by id in one call. Used by
+        SemanticMemory.get_by_ids() to resolve an episode's
+        related_semantic_memory_ids into actual fact text."""
+        if not ids:
+            return []
+        try:
+            raw = self._collection.get(ids=ids, include=["documents", "metadatas"])
+            return [
+                {"id": i, "text": d, "metadata": m}
+                for i, d, m in zip(raw["ids"], raw["documents"], raw["metadatas"])
+            ]
+        except Exception as e:
+            log.error("get_many error: %s", e, exc_info=True)
+            return []
+
+    def get_by_metadata(self, where: dict, limit: int | None = None) -> list[dict]:
+        """
+        Fetches entries matching a metadata filter with NO query text/vector
+        involved — a plain relational-style lookup, not a similarity
+        search. Used for things like "all episodes at decay_count=0
+        older than X" where there's no meaningful query to embed, only a
+        filter condition.
+
+        Chroma's .get() (unlike .query()) doesn't rank by similarity or
+        take a query, so this returns matches in whatever order the
+        collection yields them — callers that need a specific order
+        (e.g. oldest-first for decay batching) must sort the result
+        themselves.
+        """
+        try:
+            kwargs: dict[str, Any] = {"where": where, "include": ["documents", "metadatas"]}
+            if limit is not None:
+                kwargs["limit"] = limit
+            raw = self._collection.get(**kwargs)
+            return [
+                {"id": i, "text": d, "metadata": m}
+                for i, d, m in zip(raw["ids"], raw["documents"], raw["metadatas"])
+            ]
+        except Exception as e:
+            log.error("get_by_metadata error: %s", e, exc_info=True)
+            return []
+
     def update(self, id: str, text: str | None = None, metadata: dict | None = None) -> bool:
         existing = self.get(id)
         if existing is None:
@@ -128,6 +171,19 @@ class ChromaClient(VectorDBClient):
             return True
         except Exception as e:
             log.error("delete error: %s", e, exc_info=True)
+            return False
+
+    def delete_many(self, ids: list[str]) -> bool:
+        """Batch delete — used by episodic memory's decay lifecycle to
+        remove all source rows of a merge in one call rather than one
+        delete() per row."""
+        if not ids:
+            return True
+        try:
+            self._collection.delete(ids=ids)
+            return True
+        except Exception as e:
+            log.error("delete_many error: %s", e, exc_info=True)
             return False
 
     def count(self) -> int:

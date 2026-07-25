@@ -1,41 +1,41 @@
 """
 SessionManager/session_memory_tracker.py
 
-Small in-memory {session_id: [mem_ids]} map. semantic_memory.py's
-store() calls record() every time it actually creates a NEW semantic
-memory (not on a dedup hit against an existing one — see the note in
-semantic_memory.py's store() for why dedup hits don't count). At
-on_session_end, session_lifecycle.py calls get_and_clear(session_id) to
-pull everything created during this session and drop it straight into
-the new episode's related_semantic_memory_ids.
+CHANGED: previously a plain in-memory {session_id: [mem_ids]} dict, with
+a documented "acceptable gap" — if the process crashed before
+on_session_end ran, this tracker's contents were simply lost, and a
+crash-recovered episode's related_semantic_memory_ids was left empty.
+
+Now delegates to Database/active_sessions_db_client.py, which persists
+this list into the active_sessions row for the current session on every
+write. This closes that gap: a crash-recovered episode can now include
+real related_semantic_memory_ids instead of none, because the list
+survives the crash the same way chunk_summaries and full_conversation
+already do.
+
+record()/get_and_clear() keep their exact original signatures and call
+sites (semantic_memory.py's store(), session_lifecycle.py's
+on_session_end) — only the storage underneath moved from an in-memory
+dict to the durable active_sessions table. This module still exists as
+a thin wrapper (rather than every caller reaching into
+active_sessions_db_client directly) so callers keep resolving "which
+session is this" via get_session_id() exactly as before.
 
 Keyed off GlobalHelpers.logger.get_session_id() rather than a value
 passed around explicitly, because that contextvar already correctly
-propagates into background threads (the batch-extraction worker) via
-contextvars.copy_context() — see LLMEngine/extraction_worker.py. That
-means this tracker works correctly for writes from any of the three
-call sites that create semantic memory (background extraction, the
-LLM's direct tool call, and session_lifecycle's own promotion writes),
-without threading id-collection through all three individually.
-
-Deliberately just a plain in-memory dict, not persisted — if the
-process crashes before on_session_end runs, the crash-recovery path in
-session_lifecycle.py rebuilds a best-effort episode from durable
-working_memory rows instead, and related_semantic_memory_ids on that
-recovered episode is simply left empty. That's an acceptable gap: the
-semantic memories themselves are still safely in ChromaDB either way,
-only the episode-to-facts link for that one interrupted session is
-lost, not the facts.
+propagates into background threads (the batch-extraction worker, and
+now the chunk-summary worker too) via contextvars.copy_context() — see
+LLMEngine/extraction_worker.py. That means this tracker works correctly
+for writes from any of the call sites that create semantic memory
+(background extraction, the LLM's direct tool call, and
+session_lifecycle's own promotion writes), without threading
+id-collection through each of them individually.
 """
 
-import threading
-
 from GlobalHelpers.logger import get_session_id, get_logger
+import Database.active_sessions_db_client as active_sessions_db_client
 
 log = get_logger(__name__)
-
-_lock = threading.Lock()
-_tracker: dict[str, list[str]] = {}
 
 
 def record(mem_id: str) -> None:
@@ -46,12 +46,18 @@ def record(mem_id: str) -> None:
         # Nothing to attribute this to (e.g. called before any session
         # started, such as in a standalone script/test) — skip silently.
         return
-    with _lock:
-        _tracker.setdefault(session_id, []).append(mem_id)
+    active_sessions_db_client.append_semantic_memory_id(session_id, mem_id)
 
 
 def get_and_clear(session_id: str) -> list[str]:
+    """
+    NOTE: despite the name, this no longer clears anything itself.
+    active_sessions rows are deleted wholesale by close_session() right
+    after on_session_end finishes using this list — there's nothing left
+    to separately clear here. Keeping the original name for call-site
+    compatibility (session_lifecycle.py calls this unchanged) rather
+    than renaming for a purely cosmetic reason.
+    """
     if not session_id:
         return []
-    with _lock:
-        return _tracker.pop(session_id, [])
+    return active_sessions_db_client.get_related_semantic_memory_ids(session_id)

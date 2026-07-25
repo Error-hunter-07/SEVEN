@@ -43,6 +43,7 @@ class SemanticMemory:
     def __init__(self, db: VectorDBClient | None = None):
         # Allow injecting a different backend (useful for tests)
         self._db = db or semantic_memory_db
+        self._injected = db is not None
         # Don't start lifecycle immediately — ChromaDB may still be loading
         threading.Thread(target=self._start_lifecycle_when_ready, daemon=True).start()
 
@@ -52,7 +53,8 @@ class SemanticMemory:
         if not ready or chroma_module.semantic_memory_db is None:
             log.warning("ChromaDB never became ready — lifecycle skipped.")
             return
-        self._db = chroma_module.semantic_memory_db
+        if not self._injected:
+            self._db = chroma_module.semantic_memory_db
         memory_lifecycle.start(chroma_module.semantic_memory_db)
     # ---------------------------------------------------------------- write
 
@@ -215,6 +217,32 @@ class SemanticMemory:
                 )
  
         return results
+
+    def get_by_ids(self, ids: list[str]) -> list[dict]:
+        """
+        Fetch specific memories by id, no search involved. Used to
+        resolve an episode's related_semantic_memory_ids into actual
+        fact text/metadata — e.g. the episodic search tool compiling
+        "here's the episode, and here are the facts tied to it" in one
+        response.
+
+        Silently drops any id that no longer exists (a linked semantic
+        memory can outlive its own dedup/prune cycle independent of the
+        episode that referenced it) rather than erroring on a partial
+        miss.
+        """
+        if self._db is None or not ids:
+            return []
+        if not hasattr(self._db, "get_many"):
+            # Backend doesn't support batch fetch (e.g. a test double) —
+            # fall back to one get() per id.
+            results = []
+            for mem_id in ids:
+                r = self._db.get(mem_id)
+                if r is not None:
+                    results.append(r)
+            return results
+        return self._db.get_many(ids)
 
     def retrieve_as_text(
         self,
