@@ -5,6 +5,11 @@ Takes the raw user message + assistant reply, calls the local LLM to extract
 
 Extraction is a SEPARATE small LLM call — not part of the main conversation.
 We NEVER embed raw chat logs.  We embed distilled fact sentences only.
+
+All calls route through LLMEngine.llm_request_lock, since the local server
+runs --parallel 1 and can't process concurrent requests; going through the
+shared lock keeps this extractor's calls from racing the main chat turn or
+the episodic summarizer/chunk-summarizer.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import requests
 from MemoryManagement.semantic_memory.semantic_memory import semantic_memory  # FIX 2: singleton
 from GlobalHelpers.logger import get_logger
 from GlobalHelpers.config import settings
+import LLMEngine.llm_request_lock as llm_request_lock
 
 log = get_logger(__name__)
 
@@ -81,9 +87,8 @@ def extract_and_store_batch(turns: list[tuple[str, str]]) -> None:
 # extract_and_store and extract_and_store_batch can share it:
 def _extract_facts_from_snippet(conversation_snippet: str) -> list[dict]:
     try:
-        response = requests.post(
-            "http://127.0.0.1:8081/v1/chat/completions",
-            json={
+        response = llm_request_lock.post_completion(
+            {
                 "model": settings.llm_model,
                 "messages": [
                     {"role": "system", "content": _EXTRACTION_SYSTEM},
@@ -148,9 +153,8 @@ def _extract_facts(user_message: str, assistant_reply: str) -> list[dict]:
     )
 
     try:
-        response = requests.post(
-            "http://127.0.0.1:8081/v1/chat/completions",
-            json={
+        response = llm_request_lock.post_completion(
+            {
                 "model":       settings.llm_model,
                 "messages": [
                     {"role": "system", "content": _EXTRACTION_SYSTEM},

@@ -135,7 +135,9 @@ class ChromaClient(VectorDBClient):
         themselves.
         """
         try:
-            kwargs: dict[str, Any] = {"where": where, "include": ["documents", "metadatas"]}
+            kwargs: dict[str, Any] = {"include": ["documents", "metadatas"]}
+            if where:
+                kwargs["where"] = where
             if limit is not None:
                 kwargs["limit"] = limit
             raw = self._collection.get(**kwargs)

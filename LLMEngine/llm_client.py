@@ -3,21 +3,23 @@ LLMEngine/llm_client.py
 
 Core library: process bootstrap, the raw completion request, and the
 ask_llm() orchestration (tool execution, follow-up handling, memory
-extraction queuing). No REPL loop here see LLMEngine/cli.py.
+extraction queuing, rolling episodic chunk summarization). No REPL loop
+here — see LLMEngine/cli.py.
 
 MODULARITY: this used to be one 383-line file doing five separate jobs.
 Now split into:
-    LLMEngine/history_manager.py    conversation history state + trimming
-    LLMEngine/tool_schema.py        tool parameter dict -> JSON Schema
-    LLMEngine/extraction_worker.py  background memory-extraction queue
-    LLMEngine/cli.py                the __main__ REPL loop
+    LLMEngine/history_manager.py       conversation history state + trimming
+    LLMEngine/tool_schema.py           tool parameter dict -> JSON Schema
+    LLMEngine/extraction_worker.py     background memory-extraction queue
+    LLMEngine/chunk_summary_worker.py  background rolling episodic chunk summarizer
+    LLMEngine/llm_request_lock.py      shared lock around every LLM HTTP call
+    LLMEngine/cli.py                   the __main__ REPL loop
 llm_client.py itself is now importable as a pure library (e.g. by tests,
 or by a future non-CLI frontend) without triggering an input() loop.
 """
 
 import os
 import sys
-import requests
 
 from ToolCalling.register import registry
 
@@ -31,6 +33,7 @@ try:
 except ImportError:
     from response_parser import parse_response
 
+import requests
 import PromptBuilder.prompt_builder as prompt_builder
 from Runtime.process_manager import ProcessManager
 import ToolCalling.executor as tool_executor
@@ -42,6 +45,8 @@ from GlobalHelpers.config import settings
 import LLMEngine.history_manager as history_manager
 import LLMEngine.tool_schema as tool_schema
 import LLMEngine.extraction_worker as extraction_worker
+import LLMEngine.chunk_summary_worker as chunk_summary_worker
+import LLMEngine.llm_request_lock as llm_request_lock
 import MemoryManagement.working_memory.memory_lifecycle as working_memory_lifecycle
 import MemoryManagement.episodic_memory.memory_lifecycle as episodic_memory_lifecycle
 import Database.active_sessions_db_client as active_sessions_db_client
@@ -67,8 +72,9 @@ try:
     session_id = process_manager.session_id
     on_session_start(session_id)
     extraction_worker.start()
-    working_memory_lifecycle.start() #Added working memory lifecycle pruning at startup
-    episodic_memory_lifecycle.start() #Added episodic memory decay-by-summarization at startup
+    chunk_summary_worker.start()  # rolling episodic chunk summarizer, every 5 turns
+    working_memory_lifecycle.start()   # working memory TTL pruning at startup
+    episodic_memory_lifecycle.start()  # episodic memory decay-by-summarization at startup
 except Exception:
     log.exception("Failed to start LLM process")
 
@@ -79,6 +85,15 @@ except Exception:
 # previously confirmed to occur at exactly max_tokens decoded, mid
 # tool-call JSON, when this was set too low).
 MAX_RESPONSE_TOKENS = 2048
+
+# Rolling episodic chunk summarization: every 5 turns, the last 5
+# (query, assistant_activity) pairs get handed to
+# chunk_summary_worker.queue_chunk() and this local accumulator resets.
+# Deliberately a plain list, not a queue — ask_llm() is only ever called
+# from the single-threaded CLI REPL loop, same as history_manager's own
+# message list, so no lock is needed here.
+CHUNK_INTERVAL_TURNS = 5
+_current_chunk_turns: list[tuple[str, str]] = []
 
 
 def request_completion(request_messages: list[dict], use_tools: bool = True) -> dict:
@@ -93,6 +108,13 @@ def request_completion(request_messages: list[dict], use_tools: bool = True) -> 
     where forcing tool-call grammar serves no purpose and increases the
     chance of a truncated/invalid generation, especially for code-heavy
     replies.
+
+    CHANGED: now goes through LLMEngine.llm_request_lock.post_completion
+    instead of calling requests.post directly — the local server runs
+    --parallel 1 and can only process one request at a time, so this
+    shared lock keeps the main chat turn from racing the background
+    extraction worker or the episodic chunk/session summarizers for the
+    server's single processing slot.
     """
     payload = {
         "model":       settings.llm_model,
@@ -113,11 +135,7 @@ def request_completion(request_messages: list[dict], use_tools: bool = True) -> 
             for tool in registry.list_tools()
         ]
 
-    response = requests.post(
-        "http://127.0.0.1:8081/v1/chat/completions",
-        json=payload,
-        timeout=120,
-    )
+    response = llm_request_lock.post_completion(payload, timeout=120)
     response.raise_for_status()
     data    = response.json()
     choice  = data.get("choices", [{}])[0]
@@ -219,7 +237,7 @@ def ask_llm(query: str) -> str | None:
 
         extraction_worker.queue_turn(query, full_assistant_activity)
 
-         # Durable turn counter for episodic memory — see
+        # Durable turn counter for episodic memory — see
         # Database/active_sessions_db_client.py. Written to SQLite (WAL
         # mode) so it survives a crash even though history_manager's
         # message list itself is only ever in-memory.
@@ -227,6 +245,36 @@ def ask_llm(query: str) -> str | None:
             active_sessions_db_client.heartbeat(process_manager.session_id)
         except Exception:
             log.exception("Failed to update active_sessions heartbeat (non-fatal).")
+
+        # Rolling episodic chunk summarization: accumulate this turn,
+        # and every CHUNK_INTERVAL_TURNS turns hand the accumulated
+        # slice off to the background chunk summarizer, then reset for
+        # the next window. Enqueuing is non-blocking — the actual LLM
+        # call happens on chunk_summary_worker's own thread, guarded by
+        # the same shared llm_request_lock request_completion() uses, so
+        # it never competes with this turn or the extraction worker for
+        # the server's single slot in an unbounded way.
+        _current_chunk_turns.append((query, full_assistant_activity))
+        try:
+            turn_count = active_sessions_db_client.get_turn_count(process_manager.session_id)
+            if turn_count > 0 and turn_count % CHUNK_INTERVAL_TURNS == 0 and _current_chunk_turns:
+                chunk_summary_worker.queue_chunk(process_manager.session_id, list(_current_chunk_turns))
+                _current_chunk_turns.clear()
+        except Exception:
+            log.exception("Failed to queue rolling chunk summary (non-fatal).")
+
+        # Crash backup: overwrite the full conversation snapshot every
+        # turn. Cheap at the sizes this app deals with, and the
+        # last-resort recovery source for whatever hasn't been
+        # chunk-summarized yet (e.g. a crash within the first 5 turns,
+        # before the first chunk fires) — see
+        # SessionManager/session_lifecycle.py's crash-recovery path.
+        try:
+            active_sessions_db_client.save_full_conversation(
+                process_manager.session_id, history_manager.get_full_history()
+            )
+        except Exception:
+            log.exception("Failed to save full_conversation backup (non-fatal).")
 
         log.debug(get_scratchpad_memory())
         return parsed_response
