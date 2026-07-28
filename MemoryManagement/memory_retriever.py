@@ -2,7 +2,7 @@
 Compiles all memory sources into a single context string for the system prompt.
 
 CHANGED: now accepts the current user query so semantic memory can do
-similarity search. prompt_builder.build_prompt() passes the query here.
+similarity search. prompt_builder.build_dynamic_context() passes the query here.
 
 Context assembly order (matters for prompt position):
   1. Short-term (scratchpad) — always included, highest priority

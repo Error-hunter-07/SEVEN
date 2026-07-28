@@ -1,17 +1,23 @@
 import re
 
+# Mirrors ToolCalling/parser.py's tolerant tag matcher — see that file for
+# why: some local models emit a pipe-delimited variant of the tool-call
+# wrapper instead of the canonical <tool_call>...</tool_call>. Whether or
+# not the payload inside parses as valid JSON and actually executes, the
+# wrapper itself should never be shown to the user.
+_TOOL_CALL_TAG = re.compile(
+    r"<\|?/?tool_call\|?>.*?<\|?/?tool_call\|?>",
+    re.DOTALL,
+)
+
+
 def parse_response(message: str) -> str:
     """
     Convert LLM markdown-like output into terminal-friendly formatting.
     Returns formatted string.
     """
 
-    message = re.sub(
-        r"<tool_call>.*?</tool_call>",
-        "",
-        message,
-        flags=re.DOTALL,
-    ).strip()
+    message = _TOOL_CALL_TAG.sub("", message).strip()
 
     # Bold: **text**
     message = re.sub(

@@ -2,6 +2,7 @@ from Tools.tool import Tool
 import Tools.scratchpad_tool as scratchpad_tool
 import Tools.working_memory_tool as working_memory_tool
 import Tools.semantic_memory_tool as semantic_memory_tool
+import Tools.episodic_memory_tool as episodic_memory_tool
 
 class ToolRegistry:
 
@@ -135,9 +136,11 @@ registry.register(
     Tool(
         name="search_semantic_memory",
         description=(
-            "Search long-term semantic memory for facts relevant to a topic or query. "
-            "Call this when you need to recall something about the user that might have been "
-            "mentioned in a previous session — their background, skills, preferences, or past experiences. "
+            "Search long-term memory for a SINGLE STANDING FACT about the user — "
+            "their background, skills, preferences, or a specific piece of information. "
+            "Use this for fact-lookup questions (\"what's my budget\", \"what do I do for work\"). "
+            "Do NOT use this to recall what happened in a past conversation, what was decided, "
+            "or what alternatives were considered — use search_episodic_memory for that instead. "
             "Returns the most relevant stored facts."
         ),
         parameters={
@@ -149,10 +152,63 @@ registry.register(
 )
 
 
+# ── Episodic memory tool ─────────────────────────────────────────────────────
+# LLM accesses episodic memory only through this bridge tool. It never
+# touches the episodic Chroma collection directly. A deterministic
+# trigger (LLMEngine/episodic_trigger.py) also calls the same underlying
+# search-and-compile logic automatically for obvious recall-shaped
+# phrasing — this tool is the fallback for everything that trigger
+# doesn't catch (e.g. a natural question that doesn't use "last time"/
+# "we discussed" phrasing but still needs episodic recall).
+
+registry.register(
+    Tool(
+        name="search_episodic_memory",
+        description=(
+            "Recall what happened in a PAST CONVERSATION — a process, decision, sequence of "
+            "events, or the reasoning behind a choice. Use this when the user asks what was "
+            "discussed, what was decided and why, what alternatives were considered, or wants "
+            "you to continue/recall a specific past session (e.g. \"what design were we "
+            "considering for the website\", \"what did we decide about the trip budget\"). "
+            "Do NOT use this for a single standing fact about the user (e.g. their name, a "
+            "preference, a number) — use search_semantic_memory for that instead. "
+            "Returns matched session summaries along with any specific facts tied to them."
+        ),
+        parameters={
+            "query": "str - What to recall, e.g. 'website design for Rema's tutorial'.",
+            "k":     "int - Max number of past sessions to return (default 3)."
+        },
+        func=episodic_memory_tool.search_episodic_memory
+    )
+)
+
+
+registry.register(
+    Tool(
+        name="browse_episodic_memory",
+        description=(
+            "Browse episodic memory by a specific access pattern instead of a topic search — "
+            "use this when the user wants recent history, the earliest sessions, everything "
+            "from a specific past session, or a time-bounded slice (e.g. \"what have we talked "
+            "about this week\", \"what was the very first thing we discussed\", \"show me "
+            "everything from that session\"). For topic-based recall, use search_episodic_memory "
+            "instead."
+        ),
+        parameters={
+            "mode":        "str - One of: 'recent' (default, newest first), 'oldest' (earliest first), 'semantic' (topic search, requires query), 'by_session' (all episodes for one session, requires session_id).",
+            "query":       "str - Search text, only used when mode='semantic'.",
+            "limit":       "int - Max episodes to return, default 5.",
+            "session_id":  "str - A specific session's id, only used when mode='by_session'.",
+            "within_days": "int - Optional, only consider episodes from the last N days. Works with any mode.",
+        },
+        func=episodic_memory_tool.browse_episodic_memory
+    )
+)
+
+
 # Direct DB tools remain commented out — LLM accesses memory only through
-# the scratchpad bridge. Future memory types (episodic, semantic, procedural)
-# will follow the same pattern: their own bridge tool registered here,
-# no direct DB tool exposed to the LLM.
+# the scratchpad bridge. Procedural memory will follow the same pattern:
+# its own bridge tool registered here, no direct DB tool exposed to the LLM.
 
 # registry.register(Tool(name="insert_working_memory", ...))
 # registry.register(Tool(name="update_working_memory", ...))
@@ -234,4 +290,3 @@ registry.register(
 #         func=working_memory_tool.delete_working_memory
 #     )
 # )
-

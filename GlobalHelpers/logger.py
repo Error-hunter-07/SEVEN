@@ -30,6 +30,14 @@ _session_id_ctx = contextvars.ContextVar("session_id", default="no-session")
 def set_session_id(session_id: str) -> None:
     _session_id_ctx.set(session_id)
 
+def get_session_id() -> str:
+    """Public getter for the current session id. Reads the same
+    contextvar the logging filter uses, so it stays correct even from a
+    background thread that had contextvars.copy_context() propagated
+    into it (see LLMEngine/extraction_worker.py for the pattern this
+    relies on)."""
+    return _session_id_ctx.get()
+
 class _SessionFilter(logging.Filter):
     def filter(self, record):
         record.session_id = _session_id_ctx.get()

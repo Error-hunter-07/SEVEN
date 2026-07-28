@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import time
 from typing import Optional, TextIO
 import SessionManager.session_generator as session_generator
@@ -50,7 +51,7 @@ class ProcessManager:
         model_path: str = None,
         mmproj_path: str = None,
         llama_cli_path: str = None,
-        ctx_size: int = 16384,
+        ctx_size: int = 32768,
         gpu_layers: int = 999,
     ):
         # CHANGED: Guard against __init__ being called again on the already-
@@ -90,7 +91,7 @@ class ProcessManager:
             "-m", self.model_path,
 
             # MULTIMODAL PROJECTOR (REQUIRED FOR VL MODELS)
-            "--mmproj", self.mmproj_path,
+            # ---- removed---- "--mmproj", self.mmproj_path, ---reason:- we don't need multimodal projector for text-only works, we will run it only when needed to save on the VRAM, with this VRAM spiked to 5.3GB and without this it stays at 4.1GB with 32k context
 
             # CONTEXT WINDOW
             "-c", str(self.ctx_size),
@@ -115,12 +116,30 @@ class ProcessManager:
 
         log.info("Starting llama.cpp subprocess...")
 
+        # Detach the child from the console's Ctrl+C signal group. Without
+        # this, pressing Ctrl+C in the terminal sends SIGINT (POSIX) /
+        # CTRL_C_EVENT (Windows) to EVERY process in the console's process
+        # group — including this subprocess — killing the LLM server
+        # instantly and independently of our own shutdown sequence. That's
+        # what caused "connection refused" during on_session_end's
+        # LLM-based summary call after Ctrl+C: the server was already dead
+        # before our Python-level KeyboardInterrupt handling even started.
+        # With this isolation, Ctrl+C only interrupts our own process, and
+        # we decide when to stop the server (see stop(), still called
+        # explicitly via process.terminate() regardless of process group).
+        popen_kwargs = {}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+
         try:
             self.log_file = open("llama_server.log", "a")
             self.process = subprocess.Popen(
                 command,
                 stdout=self.log_file,
                 stderr=self.log_file,
+                **popen_kwargs,
             )
         except Exception:
             if self.log_file:
