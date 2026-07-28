@@ -119,3 +119,53 @@ def search_episodic_memory(query: str, k: int = 3) -> str:
 
     scratchpad_tool.add_scratchpad_tool_output("search_episodic_memory", output)
     return output
+
+
+def browse_episodic_memory(
+    mode: str = "recent",
+    query: str = None,
+    limit: int = 5,
+    session_id: str = None,
+    within_days: int = None,
+) -> str:
+    """
+    Flexible episodic memory browser — for choosing HOW to access past
+    sessions, not just searching by topic (that's search_episodic_memory).
+
+    Args:
+        mode: One of "recent" (default, newest first), "oldest"
+              (earliest first), "semantic" (topic search — requires
+              query), "by_session" (all episodes for one session —
+              requires session_id).
+        query: Search text — required when mode="semantic".
+        limit: Max episodes to return (default 5).
+        session_id: A specific session's id — required when mode="by_session".
+        within_days: Optional — only consider episodes from the last N days.
+                     Composes with any mode above.
+
+    Returns:
+        A formatted string of matched episodes with their linked facts,
+        or a 'no results' message.
+    """
+    try:
+        episodes = episodic_memory_store.get_episodes_filtered(
+            mode=mode, query=query, limit=limit, session_id=session_id, within_days=within_days,
+        )
+    except Exception:
+        log.exception("browse_episodic_memory failed for mode='%s' (non-fatal).", mode)
+        episodes = []
+
+    if not episodes:
+        output = "No matching episodes found."
+    else:
+        blocks = []
+        for ep in episodes:
+            blocks.append(_compile_episode_with_facts(ep))
+            try:
+                episodic_memory_store.mark_recalled(ep["id"])
+            except Exception:
+                log.exception("mark_recalled failed for episode %s (non-fatal).", ep.get("id"))
+        output = "\n\n".join(blocks)
+
+    scratchpad_tool.add_scratchpad_tool_output("browse_episodic_memory", output)
+    return output

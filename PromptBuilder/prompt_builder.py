@@ -1,9 +1,9 @@
 """
-CHANGED: build_prompt() now passes `user_query` down to
-memory_retriever.get_retrieved_context() so semantic memory can do a
-similarity search against the current user message.
+CHANGED: build_dynamic_context() (formerly build_prompt()) passes
+`user_query` down to memory_retriever.get_retrieved_context() so semantic
+memory can do a similarity search against the current user message.
 
-CHANGED (episodic memory): build_prompt() now also runs the
+CHANGED (episodic memory): build_dynamic_context() also runs the
 deterministic episodic-recall trigger (LLMEngine/episodic_trigger.py)
 against the raw user_query BEFORE the LLM ever sees it. If the query
 matches recall-shaped phrasing ("what did we discuss", "last time",
@@ -11,6 +11,17 @@ etc.), compiled episodic context gets appended to retrieved_context
 automatically — the LLM doesn't have to notice it needs to call
 search_episodic_memory for the obvious cases. Anything outside those
 patterns still relies on the LLM choosing to call the tool itself.
+
+CHANGED (prompt caching): this module no longer combines SYSTEM_PROMPT
+with the retrieved context into one string. SYSTEM_PROMPT is exported as
+a plain constant and set as the system message ONCE per session by
+LLMEngine.llm_client.ask_llm; build_dynamic_context() returns only the
+per-turn retrieved/episodic context, which the caller now attaches to
+the current user turn instead. This keeps the system message — and the
+unchanged tail of prior conversation history — byte-identical across
+turns so llama-server's --cache-prompt/--cache-reuse can actually reuse
+the KV cache for them instead of reprocessing the whole prompt on every
+turn. See build_dynamic_context()'s own docstring for the full reasoning.
 """
 
 import MemoryManagement.memory_retriever as memory_retriever
@@ -48,14 +59,15 @@ MEMORY TYPES — you have three different kinds of memory, use the right one:
   goals, relationships. Use search_semantic_memory when you need ONE
   standing fact (e.g. "what's my budget", "what do I do for work").
 
-- EPISODIC MEMORY (search_episodic_memory): what happened in a PAST
+- EPISODIC MEMORY (search_episodic_memory / browse_episodic_memory): what happened in a PAST
   CONVERSATION — a process, a decision, a sequence of events, alternatives
   that were considered and why one was chosen. Use search_episodic_memory
-  when the user asks to recall something that unfolded across a
-  conversation, not a single fact (e.g. "what design were we considering
-  for the website", "what did we decide about the trip and why",
-  "continue from where we left off"). Semantic memory cannot answer these
-  — it only stores standing facts, not the reasoning or sequence behind them.
+  for topic-based recall ("what design were we considering"). Use
+  browse_episodic_memory when the user cares about WHEN or WHICH session,
+  not what topic — recent history, the oldest sessions, a specific past
+  session by id, or a time window (e.g. "last 7 days"). Semantic memory
+  cannot answer these — it only stores standing facts, not the reasoning,
+  sequence, or timing behind them.
  
 These are not mutually exclusive — many facts belong in more than one.
 When in doubt, store to working memory (cheap, session-scoped) even if
@@ -70,7 +82,9 @@ WHEN TO USE TOOLS:
 - Long-term fact about user → store_semantic_memory (importance 0.4-1.0)
 - User asks for a personalized suggestion/recommendation ("you know me", "what would I like", "pick for me") → search_semantic_memory BEFORE answering, don't guess
 - User wants a SINGLE STANDING FACT recalled → search_semantic_memory
-- User wants to recall a PROCESS, DECISION, or SEQUENCE from a past conversation → search_episodic_memory
+- User wants to recall a PROCESS, DECISION, or SEQUENCE from a past conversation, by TOPIC → search_episodic_memory
+- User wants recent history, the earliest sessions, a specific past session, or a time-bounded slice ("what have we discussed this week", "the very first thing we talked about", "everything from that session") → browse_episodic_memory (mode: recent/oldest/semantic/by_session, plus within_days)
+- Unsure which episodic tool fits → prefer search_episodic_memory for "what/why" topic questions, browse_episodic_memory for "when/which session" access-pattern questions
 - Need to recall something set earlier this session → get_working_memory or get_all_working_memory
 - Task complete / topic done → update_scratchpad_summary
 - Error or failure → update_scratchpad_state execution.last_error
@@ -81,7 +95,37 @@ STYLE: concise, calm, no filler phrases like "Certainly!" or "Great question!".
 
 
 
-def build_prompt(user_query: str) -> str:
+def build_dynamic_context(user_query: str) -> str:
+    """
+    Returns ONLY the per-turn dynamic context (retrieved semantic memory +
+    any triggered episodic recall) — NOT the static SYSTEM_PROMPT.
+
+    CHANGED: previously named build_prompt() and returned
+    f"{SYSTEM_PROMPT}\\n\\n{retrieved_context}", with the caller putting
+    that whole combined string into the system message on every turn.
+    That meant the system message (message index 0 -- the very start of
+    the prompt) changed on almost every request, since retrieved_context
+    varies per query. llama-server is started with --cache-prompt
+    --cache-reuse (see Runtime/process_manager.py), which reuses the KV
+    cache for unchanged prompt content -- but a prompt whose FIRST message
+    changes every turn gets little benefit from that, since the most
+    expensive part of the prompt (SYSTEM_PROMPT + retrieved context) was
+    never a cache hit.
+
+    Now the caller (LLMEngine.llm_client.ask_llm) keeps the system
+    message fixed to the literal SYSTEM_PROMPT constant for the whole
+    session, and glues this function's return value onto the CURRENT
+    user turn's content instead (context immediately followed by the
+    actual query, in the last message of the array). Only that small,
+    always-new tail needs reprocessing each turn; the system message and
+    the earlier, unchanged conversation history stay cache-eligible.
+
+    The token-budget math below is unchanged from before -- it still
+    accounts for SYSTEM_PROMPT's size even though this function no
+    longer returns it, since SYSTEM_PROMPT still occupies real context
+    window space in the actual request regardless of which message it
+    lives in.
+    """
     retrieved_context = memory_retriever.get_retrieved_context(query=user_query)
 
     # Deterministic episodic recall trigger — see module docstring.
@@ -96,7 +140,7 @@ def build_prompt(user_query: str) -> str:
     if episodic_context:
         retrieved_context = "\n\n".join(filter(None, [retrieved_context, episodic_context]))
 
-    total = token_counter.count_tokens( 
+    total = token_counter.count_tokens(
         SYSTEM_PROMPT + retrieved_context + user_query
     )
 
@@ -116,7 +160,4 @@ def build_prompt(user_query: str) -> str:
         retrieved_context = ""
         log.warning("Still over limit — dropped all context.")
 
-    if retrieved_context and retrieved_context.strip():
-        return f"{SYSTEM_PROMPT}\n\n{retrieved_context}"
-
-    return SYSTEM_PROMPT
+    return retrieved_context

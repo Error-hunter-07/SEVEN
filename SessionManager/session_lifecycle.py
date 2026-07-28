@@ -146,29 +146,44 @@ def on_session_end(session_id: str) -> None:
         related_semantic_ids = session_memory_tracker.get_and_clear(session_id)
         chunk_summaries = active_sessions_db_client.get_chunk_summaries(session_id)
 
-        summary_result = episodic_summarizer.summarize_session(
-            goal=goal,
-            completed_subtasks=completed_subtasks,
-            memory_updates=scratchpad.get_memory_updates(),
-            last_error=last_error,
-            turn_count=turn_count,
-            chunk_summaries=chunk_summaries,
-        )
+        # BUG FIX: summarize_session()'s fallback path always appended
+        # "Turn count: N" unconditionally, so its "no notable activity"
+        # branch could never actually trigger — every trivial session
+        # (immediate /stop or Ctrl+C, turn_count=0) was still writing a
+        # real, searchable episode like "Summary: Turn count: 0" into
+        # episodic memory, polluting search/recent-episode results with
+        # noise. Skip the write entirely below a minimal activity bar.
+        if turn_count < 2 and not goal and not completed_subtasks:
+            log.info(
+                "Session %s had negligible activity (turn_count=%d, no goal, no completed subtasks) — "
+                "skipping episodic memory write.",
+                session_id, turn_count,
+            )
+            episode_id = None
+        else:
+            summary_result = episodic_summarizer.summarize_session(
+                goal=goal,
+                completed_subtasks=completed_subtasks,
+                memory_updates=scratchpad.get_memory_updates(),
+                last_error=last_error,
+                turn_count=turn_count,
+                chunk_summaries=chunk_summaries,
+            )
 
-        episode_id = episodic_memory_store.insert_episode(
-            session_id=session_id,
-            title=summary_result["title"],
-            summary=summary_result["summary"],
-            key_topics=summary_result.get("key_topics", []),
-            start_time_iso=started_at,
-            end_time_iso=ended_at,
-            turn_count=turn_count,
-            outcome=None,  # left unset until a real completion signal exists
-            related_semantic_memory_ids=related_semantic_ids,
-            importance=0.5,
-        )
-        if episode_id is None:
-            log.warning("Failed to write episodic memory row for session %s.", session_id)
+            episode_id = episodic_memory_store.insert_episode(
+                session_id=session_id,
+                title=summary_result["title"],
+                summary=summary_result["summary"],
+                key_topics=summary_result.get("key_topics", []),
+                start_time_iso=started_at,
+                end_time_iso=ended_at,
+                turn_count=turn_count,
+                outcome=None,  # left unset until a real completion signal exists
+                related_semantic_memory_ids=related_semantic_ids,
+                importance=0.5,
+            )
+            if episode_id is None:
+                log.warning("Failed to write episodic memory row for session %s.", session_id)
     except Exception:
         log.exception("Failed to write episodic memory for session %s (non-fatal).", session_id)
     finally:
@@ -234,6 +249,21 @@ def _finalize_crashed_session(stale_row: dict) -> None:
         conversation_snippet = _render_conversation_snippet(stale_row.get("full_conversation") or [])
 
     related_semantic_ids = stale_row.get("related_semantic_memory_ids") or []
+
+    # BUG FIX: same fallback-always-fires issue as on_session_end — skip
+    # writing an episode for a session that crashed before anything
+    # actually happened (turn_count=0, no chunk summaries, no raw
+    # conversation backup at all). A slightly lower bar than the clean
+    # -exit gate (turn_count < 1, not < 2) since even one interrupted
+    # turn before a crash is worth recording — it's turn_count=0 with
+    # nothing recoverable at all that's pure noise.
+    if turn_count < 1 and not chunk_summaries and not conversation_snippet:
+        log.info(
+            "Crashed session %s had no recoverable activity — skipping episodic memory write.",
+            stale_session_id,
+        )
+        active_sessions_db_client.close_session(stale_session_id)
+        return
 
     summary_result = episodic_summarizer.summarize_crashed(
         session_id=stale_session_id,

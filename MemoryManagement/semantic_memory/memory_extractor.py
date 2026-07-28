@@ -96,6 +96,7 @@ def _extract_facts_from_snippet(conversation_snippet: str) -> list[dict]:
                 ],
                 "temperature": 0.2,
                 "max_tokens": 512,
+                "chat_template_kwargs": {"enable_thinking": False},
             },
             timeout=30,
         )
@@ -162,6 +163,7 @@ def _extract_facts(user_message: str, assistant_reply: str) -> list[dict]:
                 ],
                 "temperature": 0.2,   # low temp for precise facts
                 "max_tokens":  512,
+                "chat_template_kwargs": {"enable_thinking": False},
             },
             timeout=30,
         )

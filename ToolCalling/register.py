@@ -183,6 +183,29 @@ registry.register(
 )
 
 
+registry.register(
+    Tool(
+        name="browse_episodic_memory",
+        description=(
+            "Browse episodic memory by a specific access pattern instead of a topic search — "
+            "use this when the user wants recent history, the earliest sessions, everything "
+            "from a specific past session, or a time-bounded slice (e.g. \"what have we talked "
+            "about this week\", \"what was the very first thing we discussed\", \"show me "
+            "everything from that session\"). For topic-based recall, use search_episodic_memory "
+            "instead."
+        ),
+        parameters={
+            "mode":        "str - One of: 'recent' (default, newest first), 'oldest' (earliest first), 'semantic' (topic search, requires query), 'by_session' (all episodes for one session, requires session_id).",
+            "query":       "str - Search text, only used when mode='semantic'.",
+            "limit":       "int - Max episodes to return, default 5.",
+            "session_id":  "str - A specific session's id, only used when mode='by_session'.",
+            "within_days": "int - Optional, only consider episodes from the last N days. Works with any mode.",
+        },
+        func=episodic_memory_tool.browse_episodic_memory
+    )
+)
+
+
 # Direct DB tools remain commented out — LLM accesses memory only through
 # the scratchpad bridge. Procedural memory will follow the same pattern:
 # its own bridge tool registered here, no direct DB tool exposed to the LLM.

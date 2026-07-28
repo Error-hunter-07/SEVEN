@@ -51,7 +51,7 @@ class ProcessManager:
         model_path: str = None,
         mmproj_path: str = None,
         llama_cli_path: str = None,
-        ctx_size: int = 16384,
+        ctx_size: int = 32768,
         gpu_layers: int = 999,
     ):
         # CHANGED: Guard against __init__ being called again on the already-
@@ -91,7 +91,7 @@ class ProcessManager:
             "-m", self.model_path,
 
             # MULTIMODAL PROJECTOR (REQUIRED FOR VL MODELS)
-            "--mmproj", self.mmproj_path,
+            # ---- removed---- "--mmproj", self.mmproj_path, ---reason:- we don't need multimodal projector for text-only works, we will run it only when needed to save on the VRAM, with this VRAM spiked to 5.3GB and without this it stays at 4.1GB with 32k context
 
             # CONTEXT WINDOW
             "-c", str(self.ctx_size),

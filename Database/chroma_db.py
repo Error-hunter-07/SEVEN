@@ -2,6 +2,8 @@ import os
 import logging
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["ANONYMIZED_TELEMETRY"] = "FALSE"
+os.environ["CHROMA_ANONYMIZED_TELEMETRY"] = "FALSE"  # newer config name, set both to be safe across versions
 
 _base = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(_base)

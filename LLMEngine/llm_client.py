@@ -164,8 +164,26 @@ def request_completion(request_messages: list[dict], use_tools: bool = True) -> 
 
 
 def ask_llm(query: str) -> str | None:
-    history_manager.set_system_message(prompt_builder.build_prompt(query))
-    history_manager.append_user_message(query)
+    # CHANGED: the system message is now set ONCE to the literal
+    # SYSTEM_PROMPT constant and never touched again for the rest of the
+    # session — previously it was rebuilt every turn with per-query
+    # semantic/episodic context spliced in, which meant message[0] (the
+    # start of the prompt) changed almost every request and defeated
+    # llama-server's --cache-prompt/--cache-reuse (see
+    # PromptBuilder.prompt_builder.build_dynamic_context's docstring for
+    # the full explanation). Calling this every turn with the same
+    # constant string is harmless either way — identical content means
+    # identical tokens, so it doesn't cost anything even though it's
+    # redundant after the first call.
+    history_manager.set_system_message(prompt_builder.SYSTEM_PROMPT)
+
+    # The dynamic part (retrieved semantic memory + any triggered
+    # episodic recall) is now glued onto THIS turn's user message instead
+    # of the system message, so only this small, always-new tail needs
+    # reprocessing each turn rather than the whole prompt.
+    dynamic_context = prompt_builder.build_dynamic_context(query)
+    user_turn_content = f"{dynamic_context}\n\n{query}" if dynamic_context.strip() else query
+    history_manager.append_user_message(user_turn_content)
 
     try:
         trimmed = history_manager.get_trimmed_history()

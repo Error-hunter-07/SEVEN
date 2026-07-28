@@ -99,6 +99,7 @@ def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 400)
                 ],
                 "temperature": 0.2,
                 "max_tokens": max_tokens,
+                "chat_template_kwargs": {"enable_thinking": False},
             },
             timeout=_REQUEST_TIMEOUT,
         )
@@ -122,6 +123,7 @@ def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 150)
                 ],
                 "temperature": 0.2,
                 "max_tokens": max_tokens,
+                "chat_template_kwargs": {"enable_thinking": False},
             },
             timeout=_REQUEST_TIMEOUT,
         )

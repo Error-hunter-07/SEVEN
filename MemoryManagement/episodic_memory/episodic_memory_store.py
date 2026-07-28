@@ -212,6 +212,96 @@ def get_recent_episodes_capped() -> list[dict]:
     return get_recent_episodes(limit=2)
 
 
+def get_oldest_episodes(limit: int = 5) -> list[dict]:
+    """Mirror of get_recent_episodes — oldest first instead of newest.
+    Useful for "what's the earliest thing we discussed about X" style
+    recall, or just browsing history from the beginning."""
+    db = _get_db()
+    if db is None:
+        return []
+    fetch_cap = min(max(limit * 4, 20), 200)
+    raw = db.get_by_metadata(where={}, limit=fetch_cap) if hasattr(db, "get_by_metadata") else []
+    rows = [_row_from_result(r) for r in raw]
+    rows.sort(key=lambda r: r.get("start_time_epoch") or 0)  # ascending = oldest first
+    return rows[:limit]
+
+
+def get_episodes_by_session(session_id: str) -> list[dict]:
+    """All episodes tied to one specific session_id, newest first.
+    Normally just one row, but a decay-merged episode can reference
+    multiple original sessions via merged_from, so this can't assume
+    exactly one match."""
+    db = _get_db()
+    if db is None or not session_id:
+        return []
+    raw = db.get_by_metadata(where={"session_id": session_id}) if hasattr(db, "get_by_metadata") else []
+    rows = [_row_from_result(r) for r in raw]
+    rows.sort(key=lambda r: r.get("start_time_epoch") or 0, reverse=True)
+    return rows
+
+
+def get_episodes_filtered(
+    mode: str = "recent",
+    query: str | None = None,
+    limit: int = 5,
+    session_id: str | None = None,
+    within_days: int | None = None,
+) -> list[dict]:
+    """
+    Unified filtered retrieval — the backing function for the LLM-facing
+    browse_episodic_memory tool (Tools/episodic_memory_tool.py), which
+    lets the LLM choose HOW to access episodic memory, not just search
+    by topic (that's search_episodic_memory / search_episodes above).
+
+    mode:
+      "semantic"   — ranked by relevance to `query` (required)
+      "recent"     — newest first (default)
+      "oldest"     — oldest first
+      "by_session" — all episodes for `session_id` (required)
+
+    within_days: optional additional cutoff that composes with any mode
+                 above (e.g. "recent episodes from the last 7 days").
+                 Applied as a post-filter for "semantic" (Chroma doesn't
+                 combine similarity ranking with a numeric range filter
+                 as cleanly as a pure metadata query) and as a real
+                 where-clause filter for "recent"/"oldest"/"by_session".
+    """
+    cutoff_epoch = None
+    if within_days is not None and within_days > 0:
+        cutoff_epoch = time.time() - (within_days * 86400)
+
+    if mode == "semantic":
+        if not query or not query.strip():
+            log.warning("get_episodes_filtered: mode='semantic' requires a query — returning nothing.")
+            return []
+        results = search_episodes(query, k=limit)
+        if cutoff_epoch is not None:
+            results = [r for r in results if (r.get("start_time_epoch") or 0) >= cutoff_epoch]
+        return results
+
+    if mode == "by_session":
+        if not session_id:
+            log.warning("get_episodes_filtered: mode='by_session' requires session_id — returning nothing.")
+            return []
+        rows = get_episodes_by_session(session_id)
+        if cutoff_epoch is not None:
+            rows = [r for r in rows if (r.get("start_time_epoch") or 0) >= cutoff_epoch]
+        return rows[:limit]
+
+    # mode in ("recent", "oldest") — default to "recent" for any unrecognized value
+    db = _get_db()
+    if db is None:
+        return []
+    where = {}
+    if cutoff_epoch is not None:
+        where = {"start_time_epoch": {"$gte": cutoff_epoch}}
+    fetch_cap = min(max(limit * 4, 20), 200)
+    raw = db.get_by_metadata(where=where, limit=fetch_cap) if hasattr(db, "get_by_metadata") else []
+    rows = [_row_from_result(r) for r in raw]
+    rows.sort(key=lambda r: r.get("start_time_epoch") or 0, reverse=(mode != "oldest"))
+    return rows[:limit]
+
+
 def get_episodes_by_decay_count(decay_count: int, older_than_epoch: float, limit: int | None = None) -> list[dict]:
     """Used by the decay lifecycle to find same-level candidates for
     merging: rows at exactly `decay_count` whose start_time_epoch is
