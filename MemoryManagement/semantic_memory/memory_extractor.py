@@ -98,6 +98,7 @@ def _extract_facts_from_snippet(conversation_snippet: str) -> list[dict]:
                 "max_tokens": 512,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=30,
         )
         response.raise_for_status()
@@ -165,6 +166,7 @@ def _extract_facts(user_message: str, assistant_reply: str) -> list[dict]:
                 "max_tokens":  512,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=30,
         )
         response.raise_for_status()

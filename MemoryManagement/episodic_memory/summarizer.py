@@ -101,6 +101,7 @@ def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 400)
                 "max_tokens": max_tokens,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=_REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -125,6 +126,7 @@ def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 150)
                 "max_tokens": max_tokens,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=_REQUEST_TIMEOUT,
         )
         response.raise_for_status()

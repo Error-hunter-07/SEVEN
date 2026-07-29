@@ -35,7 +35,7 @@ except ImportError:
 
 import requests
 import PromptBuilder.prompt_builder as prompt_builder
-from Runtime.process_manager import ProcessManager
+import Runtime.process_manager as process_manager_module
 import ToolCalling.executor as tool_executor
 
 from Database.chroma_db import wait_for_chroma
@@ -55,15 +55,19 @@ import Database.active_sessions_db_client as active_sessions_db_client
 configure_logging()
 log = get_logger(__name__)
 
-process_manager = ProcessManager(
-    model_path=settings.llm_model_path,
-    llama_cli_path=settings.llm_cli_path,
-    mmproj_path=settings.mmproj_path
-)
+# CHANGED (background mini-LLM): previously constructed ProcessManager
+# directly here for the one-and-only model. Now there are two roles —
+# see Runtime/main_process.py (role="main", this is what `process_manager`
+# below refers to — .session_id and .start_for_client() etc. all still
+# work exactly as before) and Runtime/background_process.py
+# (role="background", a small CPU-only model for memory extraction/
+# summarization). bootstrap_all_models() starts main BLOCKING (same
+# timing as before — the user waits on this one) and background
+# NON-BLOCKING on a daemon thread (loads in parallel, doesn't delay chat
+# start), then returns the main instance.
+process_manager = process_manager_module.bootstrap_all_models()
 
 try:
-    process_manager.start_for_client()
-
     # Wait for ChromaDB to finish loading in parallel with llama-server
     if not wait_for_chroma(timeout=120):
         log.warning("ChromaDB did not initialize in time.")

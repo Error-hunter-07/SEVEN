@@ -10,6 +10,7 @@ Run with: python -m LLMEngine.cli
 
 from LLMEngine.llm_client import ask_llm, process_manager
 import LLMEngine.extraction_worker as extraction_worker
+import Runtime.background_process as background_process
 from SessionManager.session_lifecycle import on_session_end
 from GlobalHelpers.logger import get_logger
 
@@ -40,6 +41,7 @@ def run() -> None:
                 extraction_worker.flush_and_wait(timeout=120)
                 on_session_end(process_manager.session_id)
                 process_manager.stop_from_cli()
+                background_process.stop_if_running()
                 break
 
             answer = ask_llm(user_query)
@@ -70,6 +72,7 @@ def run() -> None:
             process_manager.stop_from_cli()
         except Exception:
             log.exception("process_manager.stop_from_cli failed during shutdown (non-fatal).")
+        background_process.stop_if_running()
 
 
 if __name__ == "__main__":

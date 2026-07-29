@@ -22,49 +22,59 @@ class ProcessManager:
     now lives in Runtime/health_check.py as a standalone function; this
     class just delegates to it.
 
-    CHANGED: Enforced true singleton via __new__. Previously _instance was
-    set at the end of __init__, meaning you could construct a second
-    ProcessManager() and get a fresh object while _instance still pointed to
-    the first one (or vice-versa). Now __new__ raises RuntimeError on a second
-    construction attempt, making accidental double-instantiation impossible.
-    To create the singleton: ProcessManager(model_path=..., ...).
-    To retrieve it later: ProcessManager.get_instance().
+    CHANGED (background mini-LLM support): this class is now generic
+    across ROLES instead of being a single global singleton. Previously
+    there was only ever one llama-server process (implicitly "the" model),
+    so a hard singleton via __new__ made sense. Now there can be a "main"
+    chat model AND a "background" mini-LLM (see Runtime/main_process.py
+    and Runtime/background_process.py — each owns its role's launch
+    config and imports this class), each needing its own persistent
+    instance. The singleton guard is now a registry keyed by `role`: at
+    most one ProcessManager per role, same protection as before against
+    accidental double-instantiation, just per-role instead of global.
+
+    To create/retrieve a role's instance: ProcessManager(role=..., model_path=..., ...)
+    — safe to call more than once for the same role; later calls with
+    the same role just return the cached instance (extra kwargs on a
+    later call are ignored, same as the old singleton behavior).
+    To retrieve without risking an accidental fresh construction:
+    ProcessManager.get_instance(role=...).
     """
 
-    _instance: Optional['ProcessManager'] = None
+    _instances: dict[str, 'ProcessManager'] = {}
 
-    def __new__(cls, *args, **kwargs):
-        # CHANGED: Singleton guard in __new__. If an instance already exists
-        # and the caller is trying to construct a second one, raise immediately
-        # so the bug is visible rather than silently creating a duplicate.
-        if cls._instance is not None:
-            raise RuntimeError(
-                "ProcessManager is a singleton. "
-                "Use ProcessManager.get_instance() to retrieve the existing instance."
-            )
+    def __new__(cls, role: str = "main", *args, **kwargs):
+        if role in cls._instances:
+            return cls._instances[role]
         instance = super().__new__(cls)
-        cls._instance = instance
+        cls._instances[role] = instance
         return instance
 
     def __init__(
         self,
+        role: str = "main",
         model_path: str = None,
         mmproj_path: str = None,
         llama_cli_path: str = None,
         ctx_size: int = 32768,
         gpu_layers: int = 999,
+        port: int = 8081,
+        threads: Optional[int] = None,
     ):
         # CHANGED: Guard against __init__ being called again on the already-
-        # initialised singleton (Python calls __init__ every time even when
-        # __new__ returns an existing instance if you bypass the guard above).
+        # initialised instance for this role (Python calls __init__ every
+        # time even when __new__ returns an existing instance).
         if getattr(self, "_initialised", False):
             return
 
+        self.role = role
         self.model_path = model_path
         self.llama_cli_path = llama_cli_path
         self.mmproj_path = mmproj_path
         self.ctx_size = ctx_size
         self.gpu_layers = gpu_layers
+        self.port = port
+        self.threads = threads
 
         self.process: Optional[subprocess.Popen] = None
         self.log_file: Optional[TextIO] = None
@@ -81,7 +91,7 @@ class ProcessManager:
     def start(self):
 
         if self.alive:
-            log.info("Already running")
+            log.info("[%s] Already running", self.role)
             return
 
         command = [
@@ -111,10 +121,18 @@ class ProcessManager:
 
             "--host", "127.0.0.1",
 
-            "--port", "8081"
+            "--port", str(self.port)
         ]
 
-        log.info("Starting llama.cpp subprocess...")
+        # CHANGED: --threads is only meaningful for the CPU-bound
+        # background role today (the main model is fully GPU-offloaded
+        # via -ngl 999, so llama.cpp's default thread count is fine for
+        # it) — see Runtime/background_process.py for why this role
+        # deliberately doesn't grab every CPU thread on the machine.
+        if self.threads is not None:
+            command += ["--threads", str(self.threads)]
+
+        log.info("[%s] Starting llama.cpp subprocess...", self.role)
 
         # Detach the child from the console's Ctrl+C signal group. Without
         # this, pressing Ctrl+C in the terminal sends SIGINT (POSIX) /
@@ -134,7 +152,8 @@ class ProcessManager:
             popen_kwargs["start_new_session"] = True
 
         try:
-            self.log_file = open("llama_server.log", "a")
+            log_path = f"llama_server_{self.role}.log"
+            self.log_file = open(log_path, "a")
             self.process = subprocess.Popen(
                 command,
                 stdout=self.log_file,
@@ -148,14 +167,14 @@ class ProcessManager:
             raise
 
         self.alive = True
-        log.info("Started successfully")
+        log.info("[%s] Started successfully", self.role)
 
     def stop(self):
 
         if not self.process:
             return
 
-        log.info("Stopping subprocess...")
+        log.info("[%s] Stopping subprocess...", self.role)
 
         self.alive = False
 
@@ -172,11 +191,11 @@ class ProcessManager:
             self.log_file.close()
             self.log_file = None
 
-        log.info("Stopped")
+        log.info("[%s] Stopped", self.role)
 
     def restart(self):
 
-        log.info("Restarting model...")
+        log.info("[%s] Restarting model...", self.role)
 
         self.stop()
         time.sleep(1)
@@ -193,8 +212,14 @@ class ProcessManager:
 
     def wait_until_ready(self, timeout: int = 120) -> bool:
         """Delegates to Runtime.health_check.wait_until_ready — see that
-        module for the two-phase readiness check itself."""
-        return wait_until_ready(timeout=timeout)
+        module for the two-phase readiness check itself.
+
+        CHANGED: now passes self.port through explicitly. Previously this
+        relied on wait_until_ready's own hardcoded default (8081), which
+        was harmless when only one role/port ever existed but would
+        silently poll the WRONG port for the background role otherwise.
+        """
+        return wait_until_ready(port=self.port, timeout=timeout)
 
     def start_for_client(self) -> None:
         self.start()
@@ -207,11 +232,47 @@ class ProcessManager:
         return self.session_id
 
     @staticmethod
-    def get_instance() -> 'ProcessManager':
-        """Get the singleton instance of ProcessManager."""
-        if ProcessManager._instance is None:
+    def get_instance(role: str = "main") -> 'ProcessManager':
+        """Get the existing instance for a given role."""
+        if role not in ProcessManager._instances:
             raise RuntimeError(
-                "ProcessManager not initialised. "
-                "Call ProcessManager(model_path=..., llama_cli_path=..., mmproj_path=...) first."
+                f"ProcessManager for role={role!r} not initialised. "
+                f"Call ProcessManager(role={role!r}, model_path=..., "
+                f"llama_cli_path=..., ...) first — see Runtime/main_process.py "
+                f"and Runtime/background_process.py."
             )
-        return ProcessManager._instance
+        return ProcessManager._instances[role]
+
+
+def bootstrap_all_models() -> 'ProcessManager':
+    """
+    Starts both model roles this app uses and returns the main model's
+    ProcessManager (the one callers actually need to hang onto — e.g.
+    for .session_id — since the background role is fire-and-forget).
+
+    MODULARITY: Runtime/main_process.py and Runtime/background_process.py
+    each own their role's launch configuration (model path, port,
+    context size, GPU layers, thread count) and sequencing — this
+    function just wires the two together in the right order:
+      1. Main model starts and BLOCKS until ready (the user is waiting
+         on this one directly).
+      2. Background model starts on a daemon thread and does NOT block
+         (see Runtime/background_process.py — it's fine for it to still
+         be loading when the first chat turn happens; nothing needs it
+         until the first extraction/summarization call).
+
+    NOTE ON IMPORT DIRECTION: main_process.py and background_process.py
+    both import ProcessManager FROM this module (they need the class to
+    build their role's instance), so this module can't import them back
+    at module load time without creating a circular import. The imports
+    below are deliberately deferred to inside this function — by the
+    time this function is actually CALLED (from LLMEngine/llm_client.py's
+    bootstrap block), this module has already finished loading, so the
+    cycle isn't a problem at call time, only at import time.
+    """
+    import Runtime.main_process as main_process
+    import Runtime.background_process as background_process
+
+    main_pm = main_process.start_blocking()
+    background_process.start_nonblocking()
+    return main_pm
