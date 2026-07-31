@@ -60,6 +60,7 @@ class ProcessManager:
         gpu_layers: int = 999,
         port: int = 8081,
         threads: Optional[int] = None,
+        device: Optional[str] = None,
     ):
         # CHANGED: Guard against __init__ being called again on the already-
         # initialised instance for this role (Python calls __init__ every
@@ -75,6 +76,7 @@ class ProcessManager:
         self.gpu_layers = gpu_layers
         self.port = port
         self.threads = threads
+        self.device = device
 
         self.process: Optional[subprocess.Popen] = None
         self.log_file: Optional[TextIO] = None
@@ -131,6 +133,20 @@ class ProcessManager:
         # deliberately doesn't grab every CPU thread on the machine.
         if self.threads is not None:
             command += ["--threads", str(self.threads)]
+
+        # CHANGED: -ngl 0 alone does NOT fully keep a model off the GPU —
+        # per llama.cpp's own docs, "The GPU may still be used to
+        # accelerate some parts of the computation even when using the
+        # -ngl 0 option" (KV-cache and compute buffers can still land on
+        # the GPU device even with zero layers offloaded). This is what
+        # was causing the background role to still show up in VRAM
+        # (4.1GB -> 4.9GB) despite gpu_layers=0. --device none is the
+        # flag that actually disables GPU acceleration entirely for a
+        # process; see Runtime/background_process.py, which passes
+        # device="none" for exactly this reason. Left unset (None) for
+        # the main role, which should keep using the GPU as before.
+        if self.device is not None:
+            command += ["--device", self.device]
 
         log.info("[%s] Starting llama.cpp subprocess...", self.role)
 

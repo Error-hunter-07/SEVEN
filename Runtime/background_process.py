@@ -25,8 +25,18 @@ role's specific launch config and its non-blocking startup sequencing;
 the generic subprocess/health-check machinery stays in process_manager.py.
 
 Deliberately small footprint:
-  - gpu_layers=0: stays off the GPU entirely — that's the whole point,
-    so it never contends with the main model for VRAM.
+  - gpu_layers=0: the intent is to stay off the GPU entirely, so it never
+    contends with the main model for VRAM.
+  - device="none": CHANGED — gpu_layers=0 alone does NOT achieve that
+    intent. Per llama.cpp's own docs, "The GPU may still be used to
+    accelerate some parts of the computation even when using the -ngl 0
+    option" — the KV cache and/or compute buffers can still land on the
+    GPU even with zero layers offloaded, which is exactly what was
+    showing up as an extra ~0.8GB of VRAM use (4.1GB -> 4.9GB) once this
+    process started. --device none is the flag that actually disables
+    GPU acceleration for a process; gpu_layers=0 is kept too since it's
+    also correct/harmless, but device="none" is what's doing the real
+    work now.
   - ctx_size=4096: background inputs (a handful of recent turns, or one
     short conversation snippet) are short; no reason to reserve the same
     32k-token KV cache budget the main model gets.
@@ -50,6 +60,7 @@ PORT = 8082
 CTX_SIZE = 4096
 GPU_LAYERS = 0
 THREADS = 4
+DEVICE = "none"
 
 
 def is_configured() -> bool:
@@ -83,6 +94,7 @@ def get_or_create() -> ProcessManager:
         gpu_layers=GPU_LAYERS,
         port=PORT,
         threads=THREADS,
+        device=DEVICE,
     )
 
 
