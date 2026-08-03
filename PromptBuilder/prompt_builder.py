@@ -22,16 +22,46 @@ unchanged tail of prior conversation history — byte-identical across
 turns so llama-server's --cache-prompt/--cache-reuse can actually reuse
 the KV cache for them instead of reprocessing the whole prompt on every
 turn. See build_dynamic_context()'s own docstring for the full reasoning.
+
+CHANGED (reflection directives): build_dynamic_context() now appends a
+SELF-CORRECTION DIRECTIVES block drawn from working_memory rows of
+memory_type='reflection'. These are written asynchronously by
+LLMEngine/reflection_worker.py — one background LLM call fires every
+CHUNK_INTERVAL_TURNS (5 turns) and at session end, scoring each
+directive on 5 criteria (scope, specificity, confidence, actionable,
+novel) to set its expires_at prune duration.
+
+Because this function does a live SQLite read on every turn, a reflection
+written by the worker mid-session is visible on the VERY NEXT TURN with
+no extra signalling. The block is capped at MAX_REFLECTION_DIRECTIVES
+(5) entries, ordered by priority DESC (highest confidence first), and
+placed AFTER semantic/episodic context — behavioural nudges belong closer
+to the query than background facts do.
+
+Fallback priority when the context budget is exceeded:
+  1. Drop episodic context (most expensive, least deterministic)
+  2. Drop reflection directives (regenerated next turn anyway)
+  3. Drop semantic context → fallback query="" retrieval
+  4. Drop everything
+This mirrors the existing "cheapest fallback wins" philosophy: a missing
+reflection on one turn is harmless; a missing semantic fact might matter.
 """
 
 import MemoryManagement.memory_retriever as memory_retriever
 import GlobalHelpers.token_counter as token_counter
 import LLMEngine.episodic_trigger as episodic_trigger
+import Database.working_memory_db_client as working_memory_db_client
 from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
 
 LOCAL_CTX_LIMIT = 12000
+
+# Maximum number of reflection directives injected per turn.
+# Keep this low — each directive costs tokens and the block is rebuilt
+# every turn. 5 is enough to cover the most recent behavioural signals
+# without meaningfully growing the per-turn prompt.
+MAX_REFLECTION_DIRECTIVES = 5
 
 SYSTEM_PROMPT = """
 You are Seven (Female), an advance AI assistant similar to Jarvis. You are designed to help the user with a wide range of tasks from answering easy questions to totally
@@ -95,10 +125,55 @@ STYLE: concise, calm, no filler phrases like "Certainly!" or "Great question!".
 
 
 
+def _build_directive_block() -> str:
+    """
+    Reads the top MAX_REFLECTION_DIRECTIVES non-expired reflection rows
+    from working_memory (cross-session, ordered by priority DESC) and
+    formats them as a plain-text numbered block.
+
+    Returns an empty string when there are no active directives, so the
+    caller can safely join with filter(None, [...]) without adding a
+    blank section to the prompt.
+
+    Only the directive text is injected — not reasoning, scope, or
+    scoring metadata. The model doesn't need to see why a directive was
+    scored the way it was; it just needs the behavioural instruction.
+
+    This is a cheap SQLite read on every turn (~microseconds). The cost
+    is negligible compared to the network round-trip to the LLM server.
+    """
+    try:
+        rows = working_memory_db_client.get_active_reflections_all_sessions(
+            limit=MAX_REFLECTION_DIRECTIVES
+        )
+    except Exception:
+        log.exception("_build_directive_block: failed to fetch reflections (non-fatal).")
+        return ""
+
+    if not rows:
+        return ""
+
+    lines = ["SELF-CORRECTION DIRECTIVES (apply these in your response):"]
+    for i, row in enumerate(rows, 1):
+        value = row[3]  # already JSON-decoded by _row_to_tuple
+        if not isinstance(value, dict):
+            continue
+        directive_text = str(value.get("directive") or "").strip()
+        if directive_text:
+            lines.append(f"{i}. {directive_text}")
+
+    # If every row had an empty directive, return nothing
+    if len(lines) == 1:
+        return ""
+
+    return "\n".join(lines)
+
+
 def build_dynamic_context(user_query: str) -> str:
     """
     Returns ONLY the per-turn dynamic context (retrieved semantic memory +
-    any triggered episodic recall) — NOT the static SYSTEM_PROMPT.
+    any triggered episodic recall + active reflection directives) — NOT
+    the static SYSTEM_PROMPT.
 
     CHANGED: previously named build_prompt() and returned
     f"{SYSTEM_PROMPT}\\n\\n{retrieved_context}", with the caller putting
@@ -125,6 +200,19 @@ def build_dynamic_context(user_query: str) -> str:
     longer returns it, since SYSTEM_PROMPT still occupies real context
     window space in the actual request regardless of which message it
     lives in.
+
+    CONTEXT ASSEMBLY ORDER:
+      1. retrieved_context  (semantic memory retrieval + episodic trigger)
+      2. directive_block    (reflection directives from working_memory)
+
+    Directives sit closer to the query than background facts because
+    behavioural nudges are more immediately relevant than recalled facts.
+
+    FALLBACK ORDER when LOCAL_CTX_LIMIT is exceeded:
+      1. Drop episodic context (largest, least deterministic)
+      2. Drop reflection directives (regenerated on the next turn anyway)
+      3. Replace semantic retrieval with query="" fallback
+      4. Drop all context
     """
     retrieved_context = memory_retriever.get_retrieved_context(query=user_query)
 
@@ -140,24 +228,43 @@ def build_dynamic_context(user_query: str) -> str:
     if episodic_context:
         retrieved_context = "\n\n".join(filter(None, [retrieved_context, episodic_context]))
 
+    # Live read of active reflection directives — cheap SQLite scan,
+    # runs every turn so a new directive written mid-session by
+    # reflection_worker appears on the very next turn automatically.
+    directive_block = _build_directive_block()
+
+    full_context = "\n\n".join(filter(None, [retrieved_context, directive_block]))
+
     total = token_counter.count_tokens(
-        SYSTEM_PROMPT + retrieved_context + user_query
+        SYSTEM_PROMPT + full_context + user_query
     )
 
     if total > LOCAL_CTX_LIMIT:
-        # Drop everything gathered above (semantic retrieval AND any
-        # injected episodic context) and fall back to the cheapest
-        # possible context — a query="" semantic retrieval — rather than
-        # trying to selectively trim, which risks keeping a large
-        # episodic block over a small, more relevant semantic snippet.
-        retrieved_context = memory_retriever.get_retrieved_context(query="")
-        total = token_counter.count_tokens(
-            SYSTEM_PROMPT + retrieved_context + user_query
-        )
-        log.warning("Over limit (%d tokens) — dropped semantic memory and episodic context.", total)
+        # Step 1: drop episodic context — it's the largest variable chunk
+        # and the least immediately essential (the model can still call
+        # search_episodic_memory itself if it needs it).
+        retrieved_context_no_episodic = memory_retriever.get_retrieved_context(query=user_query)
+        full_context = "\n\n".join(filter(None, [retrieved_context_no_episodic, directive_block]))
+        total = token_counter.count_tokens(SYSTEM_PROMPT + full_context + user_query)
+        log.warning("Over limit — dropped episodic context (%d tokens).", total)
 
     if total > LOCAL_CTX_LIMIT:
-        retrieved_context = ""
+        # Step 2: drop reflection directives — they'll be back on the
+        # next turn, so losing one turn's worth is harmless.
+        retrieved_context_no_episodic = memory_retriever.get_retrieved_context(query=user_query)
+        full_context = retrieved_context_no_episodic
+        total = token_counter.count_tokens(SYSTEM_PROMPT + full_context + user_query)
+        log.warning("Over limit — dropped reflection directives (%d tokens).", total)
+
+    if total > LOCAL_CTX_LIMIT:
+        # Step 3: fall back to cheap semantic retrieval (no query match).
+        full_context = memory_retriever.get_retrieved_context(query="")
+        total = token_counter.count_tokens(SYSTEM_PROMPT + full_context + user_query)
+        log.warning("Over limit — fell back to empty-query semantic retrieval (%d tokens).", total)
+
+    if total > LOCAL_CTX_LIMIT:
+        # Step 4: drop everything.
+        full_context = ""
         log.warning("Still over limit — dropped all context.")
 
-    return retrieved_context
+    return full_context
