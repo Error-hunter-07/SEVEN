@@ -13,3 +13,6 @@ VectorStore*
 logs/
 
 data/
+
+llama_server_background.log*
+llama_server_main.log*
