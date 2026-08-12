@@ -60,8 +60,14 @@ class ProcessManager:
         gpu_layers: int = 999,
         port: int = 8081,
         threads: Optional[int] = None,
-        device: Optional[str] = None,
+        **kwargs,
     ):
+        # **kwargs absorbs role-specific arguments that callers may pass
+        # (e.g. device= from background_process.py) without requiring
+        # every role's launch config to be threaded through this generic
+        # class. Unknown kwargs are intentionally ignored here — each
+        # role's process.py is responsible for using them in its own
+        # start() logic if needed.
         # CHANGED: Guard against __init__ being called again on the already-
         # initialised instance for this role (Python calls __init__ every
         # time even when __new__ returns an existing instance).
@@ -76,14 +82,24 @@ class ProcessManager:
         self.gpu_layers = gpu_layers
         self.port = port
         self.threads = threads
-        self.device = device
 
         self.process: Optional[subprocess.Popen] = None
         self.log_file: Optional[TextIO] = None
 
         self.alive = False
-        self.session_id = session_generator.generate_universal_session_id()
-        log.info("Session id generated: %s", self.session_id)
+
+        # Session identity belongs only to the main model — background
+        # roles are LLM subprocesses with no session of their own.
+        # Generating an ID for every role caused a spurious second
+        # "Session id generated" log line and, more importantly, meant
+        # get_session_id() could return the wrong ID if called on the
+        # wrong instance. Python 3.14 changed threading/import ordering
+        # in ways that made this double-init surface more reliably.
+        if self.role == "main":
+            self.session_id = session_generator.generate_universal_session_id()
+            log.info("Session id generated: %s", self.session_id)
+        else:
+            self.session_id = None
 
         # CHANGED: Mark as initialised so repeated __init__ calls are no-ops.
         self._initialised = True
@@ -133,20 +149,6 @@ class ProcessManager:
         # deliberately doesn't grab every CPU thread on the machine.
         if self.threads is not None:
             command += ["--threads", str(self.threads)]
-
-        # CHANGED: -ngl 0 alone does NOT fully keep a model off the GPU —
-        # per llama.cpp's own docs, "The GPU may still be used to
-        # accelerate some parts of the computation even when using the
-        # -ngl 0 option" (KV-cache and compute buffers can still land on
-        # the GPU device even with zero layers offloaded). This is what
-        # was causing the background role to still show up in VRAM
-        # (4.1GB -> 4.9GB) despite gpu_layers=0. --device none is the
-        # flag that actually disables GPU acceleration entirely for a
-        # process; see Runtime/background_process.py, which passes
-        # device="none" for exactly this reason. Left unset (None) for
-        # the main role, which should keep using the GPU as before.
-        if self.device is not None:
-            command += ["--device", self.device]
 
         log.info("[%s] Starting llama.cpp subprocess...", self.role)
 
@@ -244,7 +246,19 @@ class ProcessManager:
     def stop_from_cli(self) -> None:
         self.stop()
 
-    def get_session_id(self):
+    def get_session_id(self) -> str:
+        """Returns this process's session ID.
+
+        Only the main role has a session ID. Calling this on any other
+        role is a programming error — raises RuntimeError rather than
+        silently returning None, which would propagate a null session_id
+        into DB writes and produce hard-to-debug empty-string foreign keys.
+        """
+        if self.session_id is None:
+            raise RuntimeError(
+                f"get_session_id() called on role={self.role!r} — only the "
+                f"'main' role owns a session ID. This is a programming error."
+            )
         return self.session_id
 
     @staticmethod
