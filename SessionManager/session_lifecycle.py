@@ -37,6 +37,7 @@ from MemoryManagement.semantic_memory.semantic_memory import semantic_memory
 import SessionManager.session_memory_tracker as session_memory_tracker
 import Database.active_sessions_db_client as active_sessions_db_client
 import Database.working_memory_db_client as working_memory_db_client
+import Database.kg_sleep_queue_client as kg_sleep_queue_client
 import MemoryManagement.episodic_memory.episodic_memory_store as episodic_memory_store
 import MemoryManagement.episodic_memory.summarizer as episodic_summarizer
 import LLMEngine.llm_request_lock as llm_request_lock
@@ -495,6 +496,29 @@ def on_session_end(session_id: str) -> None:
             )
             if episode_id is None:
                 log.warning("Failed to write episodic memory row for session %s.", session_id)
+            else:
+                # Queue this session for the Knowledge Graph sleep pipeline
+                # BEFORE close_session() deletes active_sessions below —
+                # this is the only remaining place the conversation text
+                # and related_semantic_ids survive past this function.
+                try:
+                    conversation_text = (
+                        "\n\n".join(chunk_summaries) if chunk_summaries
+                        else _render_conversation_snippet(
+                            active_sessions_db_client.get_full_conversation(session_id)
+                        )
+                    )
+                    kg_sleep_queue_client.enqueue_session(
+                        session_id=session_id,
+                        episodic_memory_id=episode_id,
+                        semantic_memory_ids=related_semantic_ids,
+                        conversation_text=conversation_text,
+                    )
+                except Exception:
+                    log.exception(
+                        "Failed to enqueue session %s for sleep processing (non-fatal).",
+                        session_id,
+                    )
     except Exception:
         log.exception("Failed to write episodic memory for session %s (non-fatal).", session_id)
     finally:
@@ -615,6 +639,24 @@ def _finalize_crashed_session(stale_row: dict) -> None:
             "Recovered crashed session %s as an interrupted episode (%d turns, %d chunk summaries, %d linked facts).",
             stale_session_id, turn_count, len(chunk_summaries), len(related_semantic_ids),
         )
+        # Queue the recovered session too — a crash shouldn't leave it
+        # permanently invisible to the sleep pipeline just because it
+        # never reached a clean on_session_end.
+        try:
+            conversation_text = (
+                "\n\n".join(chunk_summaries) if chunk_summaries else conversation_snippet
+            )
+            kg_sleep_queue_client.enqueue_session(
+                session_id=stale_session_id,
+                episodic_memory_id=episode_id,
+                semantic_memory_ids=related_semantic_ids,
+                conversation_text=conversation_text,
+            )
+        except Exception:
+            log.exception(
+                "Failed to enqueue crashed session %s for sleep processing (non-fatal).",
+                stale_session_id,
+            )
 
     active_sessions_db_client.close_session(stale_session_id)
 
