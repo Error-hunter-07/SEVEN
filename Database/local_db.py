@@ -59,6 +59,23 @@ ADDED (Knowledge Graph — Phase 1):
   existing tables and are registered in _ensure_schema() so they are
   created on startup alongside working_memory and active_sessions.
 
+ADDED (Knowledge Graph — sleep queue):
+  kg_sleep_queue     — durable hand-off table between a session ending
+                       and the sleep pipeline processing it. Populated
+                       in SessionManager/session_lifecycle.py's
+                       on_session_end (and crash recovery's
+                       _finalize_crashed_session) BEFORE the
+                       active_sessions row is deleted, so the session's
+                       episodic id, semantic memory ids, and narrative
+                       text all survive past close_session(). The sleep
+                       pipeline reads pending rows from here instead of
+                       reconstructing session context from ChromaDB
+                       metadata after the fact. A row is only deleted
+                       (or its processed_at stamped) once the sleep
+                       pipeline has actually consumed it, so
+                       count_pending() also doubles as "how many
+                       sessions are waiting to be processed".
+
 SCHEMA INIT: each table has its own independent _ensure_*_schema()
 function rather than one shared executescript() blob, so a DDL problem
 in one table's block can't take a working, unrelated table's init down
@@ -522,6 +539,80 @@ def _ensure_kg_graph_logs_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_kg_sleep_queue_schema(conn: sqlite3.Connection) -> None:
+    """
+    kg_sleep_queue — durable input queue for the Knowledge Graph sleep
+    pipeline, one row per session awaiting processing.
+
+    PURPOSE:
+      A session's raw context (full conversation, related semantic
+      memory ids) lives in active_sessions only while the session is
+      open — close_session() deletes that row entirely once the
+      episodic write succeeds. Without this table, anything the sleep
+      pipeline needs beyond the episode's title+summary would already
+      be gone by the time it runs. This table is written BEFORE
+      close_session() runs, so it becomes the sleep pipeline's durable,
+      crash-safe input — independent of ChromaDB and independent of
+      active_sessions' lifecycle.
+
+    COLUMNS:
+      session_id           — PRIMARY KEY. Same session_id used across
+                              active_sessions and episodic_memory
+                              metadata — the join key for everything.
+      episodic_memory_id    — the id returned by
+                              episodic_memory_store.insert_episode() for
+                              this session. Lets the pipeline fetch the
+                              full episode (title + summary) from
+                              ChromaDB without re-deriving it.
+      semantic_memory_ids   — JSON list of ChromaDB semantic_memory ids
+                              created during this session (from
+                              session_memory_tracker.get_and_clear()).
+                              Lets the pipeline fetch each fact's text
+                              individually via semantic_memory.get_by_ids().
+      conversation_text     — chunk_summaries joined into one string, or
+                              a full_conversation snippet fallback when
+                              no chunk summary exists yet. Gives the
+                              sleep pipeline's entity extractor real
+                              narrative context instead of just the
+                              compressed episode summary.
+      queued_at             — ISO timestamp, when this row was written.
+                              Sleep pipeline processes oldest-first.
+      processed_at          — NULL while pending. Set to an ISO
+                              timestamp once the sleep pipeline finishes
+                              extracting entities/edges from this
+                              session. NULL rows are exactly the sleep
+                              pipeline's backlog — COUNT(*) WHERE
+                              processed_at IS NULL is "sessions
+                              remaining to process".
+
+    INDEXES:
+      idx_kg_sleep_queue_processed_at — lets get_pending_sessions() and
+                                        count_pending() filter
+                                        WHERE processed_at IS NULL
+                                        without a full table scan.
+
+    Rows are not deleted on processing (processed_at is stamped
+    instead) so a completed sleep batch stays inspectable; a separate
+    delete_processed(older_than_days) cleanup call is used to prune old
+    processed rows once they're no longer useful for debugging.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS kg_sleep_queue (
+            session_id           TEXT PRIMARY KEY,
+            episodic_memory_id   TEXT NOT NULL,
+            semantic_memory_ids  TEXT NOT NULL DEFAULT '[]',  -- JSON list
+            conversation_text    TEXT NOT NULL DEFAULT '',
+            queued_at            TEXT NOT NULL,
+            processed_at         TEXT  -- NULL = unprocessed
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_kg_sleep_queue_processed_at
+            ON kg_sleep_queue (processed_at);
+        """
+    )
+
+
 def _ensure_schema() -> None:
     global _schema_ready
     if _schema_ready:
@@ -540,6 +631,7 @@ def _ensure_schema() -> None:
                 ("kg_node_keywords", _ensure_kg_node_keywords_schema),
                 ("kg_memory_nodes",  _ensure_kg_memory_nodes_schema),
                 ("kg_graph_logs",    _ensure_kg_graph_logs_schema),
+                ("kg_sleep_queue",   _ensure_kg_sleep_queue_schema),
             ):
                 try:
                     fn(conn)
