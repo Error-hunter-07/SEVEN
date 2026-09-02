@@ -517,3 +517,27 @@ OPERATION_REQUIRED_FIELDS: dict[str, list[str]] = {
 # not a sign of a fundamentally bad operation.
 CONFIDENCE_MIN: float = 0.0
 CONFIDENCE_MAX: float = 1.0
+
+def build_entity_extraction_user_from_bundle(bundle) -> str:
+    parts = [f"SESSION: {bundle.session_id}", ""]
+    if bundle.conversation_text and bundle.conversation_text.strip():
+        parts.append("CONVERSATION NARRATIVE (chunk summaries — primary extraction signal):")
+        parts.append(bundle.conversation_text.strip())
+    else:
+        parts.append("CONVERSATION NARRATIVE: (not available for this session)")
+    parts.append("")
+    if bundle.episode_text and bundle.episode_text.strip():
+        parts.append("EPISODE SUMMARY (title and overview):")
+        parts.append(bundle.episode_text.strip())
+        parts.append("")
+    if bundle.semantic_texts:
+        parts.append(f"SEMANTIC FACTS FROM THIS SESSION ({len(bundle.semantic_texts)}):")
+        for i, text in enumerate(bundle.semantic_texts, 1):
+            parts.append(f"  {i}. {text.strip()}")
+        parts.append("")
+    parts.append(
+        "Extract all entities and relationships present in this session. "
+        "Use the CONVERSATION NARRATIVE as the primary signal. "
+        "Semantic facts confirm and reinforce — do not treat them as the only source."
+    )
+    return "\n".join(parts)
