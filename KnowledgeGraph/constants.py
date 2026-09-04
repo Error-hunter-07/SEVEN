@@ -83,8 +83,8 @@ ENTITY_EXTRACTION_TIMEOUT: float = 45.0
 OPERATION_PROPOSAL_TIMEOUT: float = 45.0
 
 # Max tokens for each LLM call
-ENTITY_EXTRACTION_MAX_TOKENS: int = 800
-OPERATION_PROPOSAL_MAX_TOKENS: int = 600
+ENTITY_EXTRACTION_MAX_TOKENS: int = 1600
+OPERATION_PROPOSAL_MAX_TOKENS: int = 1600
 
 # Temperature for both LLM calls.
 # Lower than the main model — this is a classification/extraction task,
@@ -428,7 +428,15 @@ OUTPUT FORMAT:
       "alias": "..."
     }}
   ]
-}}"""
+}}
+
+EXAMPLE — new nodes, empty subgraph:
+  Resolved entities: Seven (node_id=abc123, NEW NODE), Python (node_id=def456, NEW NODE)
+  Current subgraph: (no existing connections)
+  Memory: "Seven is built using Python."
+  → Correct output: insert_edge from abc123 to def456, relation="built_with"
+  (Do NOT use update_edge_confidence or add_alias here — there is nothing to update yet.)
+"""
 
 
 def build_operation_proposal_system() -> str:
@@ -449,6 +457,7 @@ def build_operation_proposal_user(
     resolved_entities: list[dict],
     subgraph_text: str,
     memory_ids_and_texts: list[tuple[str, str]],
+    hints: list[str] = None
 ) -> str:
     """
     Build the user message for the operation proposal call.
@@ -485,6 +494,10 @@ def build_operation_proposal_user(
         "Propose the minimum graph operations that accurately reflect "
         "the relationships in these memories given the existing subgraph above."
     )
+    parts.append("")
+    parts.append("\n\nCANDIDATE RELATIONS (hints from initial extraction, verify against memories):\n")
+    if hints:
+        parts.extend(hints)
     return "\n".join(parts)
 
 

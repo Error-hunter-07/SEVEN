@@ -269,7 +269,7 @@ def _process_bundle(bundle: SessionBundle, report: SleepReport) -> bool:
     subgraph = fetch_subgraph(resolved)
 
     # Step 4: propose graph operations
-    proposed = propose_operations(resolved, subgraph, [bundle])
+    proposed = propose_operations(resolved, subgraph, [bundle], extraction.candidate_relations)
     if proposed is None:
         log.warning("_process_bundle: proposal failed for session=%s — skipping.", session_id)
         return False   # retry

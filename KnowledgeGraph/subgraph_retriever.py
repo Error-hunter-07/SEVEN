@@ -45,14 +45,14 @@ def _format_text(nodes, edges, seed_ids, new_ids):
         node = nodes.get(nid)
         if node:
             flag = " [NEW]" if nid in new_ids else ""
-            lines.append(f"  {node['name']} ({nid[:8]}) type={node['type']} conf={node['confidence']:.2f}{flag}")
+            lines.append(f"  {node['name']} ({nid}) type={node['type']} conf={node['confidence']:.2f}{flag}")
     if edges:
         lines.append(""); lines.append("Active edges:")
         for edge in sorted(edges, key=lambda e: -e["weight"]):
             src = nodes.get(edge["source_id"]); tgt = nodes.get(edge["target_id"])
-            sl = f"{src['name']} ({edge['source_id'][:8]})" if src else edge["source_id"][:8]
-            tl = f"{tgt['name']} ({edge['target_id'][:8]})" if tgt else edge["target_id"][:8]
-            lines.append(f"  [{edge['id'][:8]}]  {sl} --{edge['relation']}--> {tl}  conf={edge['confidence']:.2f}")
+            sl = f"{src['name']} ({edge['source_id']})" if src else edge["source_id"]
+            tl = f"{tgt['name']} ({edge['target_id']})" if tgt else edge["target_id"]
+            lines.append(f"  [{edge['id']}]  {sl} --{edge['relation']}--> {tl}  conf={edge['confidence']:.2f}")
     return "\n".join(lines)
 
 def fetch_subgraph(resolved):

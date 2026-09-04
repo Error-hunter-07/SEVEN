@@ -295,7 +295,18 @@ def _parse_response(
             "_parse_response: JSON decode failed for session=%s: %s\nraw: %s",
             session_id, e, raw[:300],
         )
-        return ExtractionResult(session_id=session_id, memory_ids=memory_ids, raw_response=raw)
+        repaired = _try_repair_json(raw)
+        if repaired is not None:
+            log.info(
+                "_parse_response: JSON repair succeeded for session=%s.",
+                session_id,
+            )
+            parsed = repaired
+        else:
+            log.warning(
+                "_parse_response: JSON repair failed for session=%s.",
+                session_id,
+            )
 
     if not isinstance(parsed, dict):
         log.warning(
@@ -388,7 +399,7 @@ def extract_entities_from_bundle(
                 "max_tokens":           ENTITY_EXTRACTION_MAX_TOKENS,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
-            role    = "background",
+            role    = "main",
             timeout = ENTITY_EXTRACTION_TIMEOUT,
         )
         response.raise_for_status()
@@ -414,3 +425,22 @@ def extract_entities_from_bundle(
         return ExtractionResult(session_id=session_id, memory_ids=memory_ids, raw_response="")
 
     return _parse_response(raw, session_id, memory_ids)
+
+def _try_repair_json(raw: str) -> Optional[dict]:
+    """Best-effort recovery for truncated JSON: cut back to the last
+    complete entity object and close open brackets."""
+    import re
+    # find the last complete "}" that closes an entity dict
+    last_close = raw.rfind("}")
+    if last_close == -1:
+        return None
+    candidate = raw[:last_close + 1]
+    # balance brackets
+    opens_sq, closes_sq = candidate.count("["), candidate.count("]")
+    opens_cu, closes_cu = candidate.count("{"), candidate.count("}")
+    candidate += "]" * (opens_sq - closes_sq)
+    candidate += "}" * (opens_cu - closes_cu)
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
