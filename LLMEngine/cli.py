@@ -6,6 +6,16 @@ can be imported as a pure library (by tests, or by a future non-CLI
 frontend) without triggering an input() loop as a side effect of import.
 
 Run with: python -m LLMEngine.cli
+
+ADDED: /sleep and /sleep N commands that trigger the Knowledge Graph
+sleep pipeline. The pipeline is imported lazily (inside the handler)
+so a missing KnowledgeGraph package never blocks normal chat startup.
+
+COMMANDS:
+  /stop          — flush pending work, write episodic memory, exit.
+  /sleep         — run the KG sleep pipeline (up to MAX_BATCHES_PER_SLEEP sessions).
+  /sleep N       — run the KG sleep pipeline for up to N sessions.
+  /sleep status  — show how many sessions are pending in the queue.
 """
 
 from LLMEngine.llm_client import ask_llm, process_manager
@@ -16,6 +26,67 @@ from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# /sleep command handler
+# ---------------------------------------------------------------------------
+
+def _handle_sleep(arg: str) -> None:
+    """
+    Handle /sleep [N | status].
+
+    /sleep          → run up to MAX_BATCHES_PER_SLEEP sessions
+    /sleep N        → run up to N sessions (N must be a positive integer)
+    /sleep status   → print pending session count, do not process anything
+    """
+    try:
+        from KnowledgeGraph.sleep_scheduler import run_sleep_cycle
+        from KnowledgeGraph.memory_selector import get_queue_status
+        from KnowledgeGraph.constants import MAX_BATCHES_PER_SLEEP
+    except ImportError as e:
+        print(f"[Sleep] KnowledgeGraph package not available: {e}")
+        return
+
+    arg = arg.strip().lower()
+
+    # /sleep status
+    if arg == "status":
+        try:
+            total, pending = get_queue_status()
+            if pending < 0:
+                print("[Sleep] Could not read queue status (DB error).")
+            elif pending == 0:
+                print(f"[Sleep] Queue is empty — knowledge graph is up to date. ({total} sessions total)")
+            else:
+                print(f"[Sleep] {pending} session(s) pending / {total} total in queue.")
+        except Exception as e:
+            print(f"[Sleep] Error reading queue status: {e}")
+        return
+
+    # /sleep N
+    max_batches = MAX_BATCHES_PER_SLEEP
+    if arg:
+        try:
+            n = int(arg)
+            if n <= 0:
+                print(f"[Sleep] N must be a positive integer, got {n!r}.")
+                return
+            max_batches = n
+        except ValueError:
+            print(f"[Sleep] Unknown argument {arg!r}. Usage: /sleep | /sleep N | /sleep status")
+            return
+
+    # Run the pipeline
+    try:
+        run_sleep_cycle(max_batches=max_batches, batch_size=1, print_progress=True)
+    except Exception as e:
+        log.exception("_handle_sleep: unhandled error during sleep cycle.")
+        print(f"[Sleep] Error during sleep cycle: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Main REPL
+# ---------------------------------------------------------------------------
 
 def run() -> None:
     """
@@ -37,29 +108,40 @@ def run() -> None:
                 # exception handler below.
                 break
 
-            if user_query.strip().lower() == "/stop":
+            stripped = user_query.strip()
+
+            # ── /stop ─────────────────────────────────────────────────
+            if stripped.lower() == "/stop":
                 extraction_worker.flush_and_wait(timeout=120)
                 on_session_end(process_manager.session_id)
                 process_manager.stop_from_cli()
                 background_process.stop_if_running()
                 break
 
+            # ── /sleep [N | status] ───────────────────────────────────
+            if stripped.lower().startswith("/sleep"):
+                arg = stripped[len("/sleep"):].strip()
+                _handle_sleep(arg)
+                continue
+
+            # ── normal turn ───────────────────────────────────────────
             answer = ask_llm(user_query)
 
             print("\nAssistant:")
             print(answer)
+
     except KeyboardInterrupt:
         print("\nInterrupted — closing session cleanly...")
-        log.warning("KeyboardInterrupt received — closing session for %s.", process_manager.session_id)
+        log.warning(
+            "KeyboardInterrupt received — closing session for %s.",
+            process_manager.session_id,
+        )
     except Exception:
         log.exception("Unhandled exception in CLI loop — attempting a clean session close.")
     finally:
         # Order matters here: flush pending extraction work and write the
         # episodic summary WHILE the LLM server is still guaranteed to be
-        # running (see Runtime/process_manager.py's process-group isolation
-        # — the server no longer dies from the console's own Ctrl+C, so it's
-        # still up at this point even after an interrupt), and only stop
-        # the server as the very last step.
+        # running, and only stop the server as the very last step.
         try:
             extraction_worker.flush_and_wait(timeout=120)
         except Exception:
