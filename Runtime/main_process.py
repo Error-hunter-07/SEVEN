@@ -22,7 +22,7 @@ log = get_logger(__name__)
 
 PORT = 8081
 CTX_SIZE = 32768
-GPU_LAYERS = 999
+GPU_LAYERS = 20
 
 
 def get_or_create() -> ProcessManager:

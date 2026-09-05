@@ -58,7 +58,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _render_conversation_snippet(messages: list, max_chars: int = 2000) -> str:
+def _render_conversation_snippet(messages: list, max_chars: int = 4000) -> str:
     """Turns the raw {role, content} message list (as saved every turn by
     active_sessions_db_client.save_full_conversation) into a compact
     text snippet for the crash summarizer — used only when NO chunk
@@ -186,13 +186,13 @@ def _consolidate_reflections(session_id: str) -> None:
     try:
         response = llm_request_lock.post_completion(
             {
-                "model":    settings.llm_model,
+                "model":    settings.background_llm_model,
                 "messages": [
                     {"role": "system", "content": _CONSOLIDATION_SYSTEM},
                     {"role": "user",   "content": user_content},
                 ],
-                "temperature":          0.2,   # very low — this is a classification task
-                "max_tokens":           400,
+                "temperature":          0.1,   # very low — this is a classification task
+                "max_tokens":           512,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
             role    = "background",

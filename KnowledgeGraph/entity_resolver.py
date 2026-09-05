@@ -39,17 +39,19 @@ def _best_keyword_match(entity):
     if best_node is None or best_score < MERGE_CONFIDENCE_THRESHOLD: return None
     return (best_node, best_score)
 
-def _best_prefix_match(entity):
-    prefix = entity.name[:5].strip()
-    if len(prefix) < 3: return None
-    candidates = kg.search_nodes_by_name_prefix(prefix, limit=5)
-    if not candidates: return None
-    ek = set(kg._extract_keywords(entity.name, entity.heading))
-    for node in candidates:
-        if node["importance"] < 0.6: continue
-        nk = set(kg.get_keywords_for_node(node["id"]))
-        if ek & nk: return node
-    return None
+#The following block is commented because the prefix match logic over here can merge entities which are not even similar like java vs javascript, react vs reactive, etc
+
+# def _best_prefix_match(entity):
+#     prefix = entity.name[:5].strip()
+#     if len(prefix) < 3: return None
+#     candidates = kg.search_nodes_by_name_prefix(prefix, limit=5)
+#     if not candidates: return None
+#     ek = set(kg._extract_keywords(entity.name, entity.heading))
+#     for node in candidates:
+#         if node["importance"] < 0.6: continue
+#         nk = set(kg.get_keywords_for_node(node["id"]))
+#         if ek & nk: return node
+#     return None
 
 def _apply_side_effects(entity, node, is_new):
     for alias in entity.aliases:
@@ -79,12 +81,15 @@ def _resolve_one(entity):
         _apply_side_effects(entity, node, False)
         kg.add_alias(node["id"], entity.name)
         return ResolutionResult(entity=entity, node_id=node["id"], is_new=False, match_method="keyword", match_confidence=score, node_name=node["name"])
-    prefix_match = _best_prefix_match(entity)
-    if prefix_match:
-        node = prefix_match
-        _apply_side_effects(entity, node, False)
-        kg.add_alias(node["id"], entity.name)
-        return ResolutionResult(entity=entity, node_id=node["id"], is_new=False, match_method="prefix", match_confidence=0.7, node_name=node["name"])
+    
+    #Removed from the prefix match logic from here too
+
+    # prefix_match = _best_prefix_match(entity)
+    # if prefix_match:
+    #     node = prefix_match
+    #     _apply_side_effects(entity, node, False)
+    #     kg.add_alias(node["id"], entity.name)
+    #     return ResolutionResult(entity=entity, node_id=node["id"], is_new=False, match_method="prefix", match_confidence=0.7, node_name=node["name"])
     new_id = kg.insert_node(name=entity.name, type=entity.type, heading=entity.heading, confidence=entity.confidence, importance=min(entity.confidence, 0.6))
     if not new_id:
         existing = kg.get_node_by_name(entity.name)

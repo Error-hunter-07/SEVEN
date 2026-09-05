@@ -61,7 +61,6 @@ DB_USER=ignored      # legacy field, SQLite is used — any value works
 DB_PASSWORD=ignored
 DB_NAME=ignored
 
-# Optional — enables background mini-LLM for extraction/summarization
 # BACKGROUND_LLM_MODEL_PATH=C:/path/to/small-model.gguf
 # BACKGROUND_LLM_CLI_PATH=C:/path/to/llama-server.exe  # if different binary
 ```

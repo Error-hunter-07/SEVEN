@@ -57,7 +57,7 @@ from Runtime.process_manager import ProcessManager
 log = get_logger(__name__)
 
 PORT = 8082
-CTX_SIZE = 4096
+CTX_SIZE = 8192
 GPU_LAYERS = 0
 THREADS = 4
 DEVICE = "none"

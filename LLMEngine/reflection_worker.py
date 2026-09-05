@@ -266,7 +266,7 @@ def _call_llm(job: _ReflectionJob):
     try:
         response = llm_request_lock.post_completion(
             {
-                "model":    settings.llm_model,
+                "model":    settings.background_llm_model,
                 "messages": [
                     {"role": "system", "content": _REFLECTION_SYSTEM},
                     {"role": "user",   "content": user_content},
