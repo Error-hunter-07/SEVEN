@@ -1,0 +1,37 @@
+# SEVEN — Python dependencies
+# Install into a venv: pip install -r requirements.txt
+#
+# PYTHON VERSION: 3.13.x (tested on 3.13.5)
+# Python 3.14 (pre-release) is missing pre-built wheels for several
+# packages. Use 3.13 to install everything without a compiler.
+#
+#   py -3.13 -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+# llama.cpp / llama-server is NOT a Python package — install separately
+# from https://github.com/ggerganov/llama.cpp/releases
+
+# ── Core HTTP client (LLM server calls) ─────────────────────────────
+requests~=2.32
+
+# ── Environment / config ────────────────────────────────────────────
+python-dotenv~=1.0
+
+# ── Tokenisation (context window token counting) ────────────────────
+tiktoken~=0.7
+
+# ── Vector DB + embeddings ───────────────────────────────────────────
+# chromadb 0.5.x and 1.0.x require compiling chroma-hnswlib from C++ source
+# (no pre-built wheel for Windows on cp313). chromadb 1.1.x+ moved
+# chroma-hnswlib to a dev-only extra — it is NOT installed at runtime,
+# so no compiler is needed. API is fully compatible: PersistentClient,
+# get_or_create_collection, and SentenceTransformerEmbeddingFunction all
+# exist at the same import paths.
+chromadb>=1.1.1,<2.0.0
+
+# sentence-transformers: HF hub offline flag respected correctly at >=3.0
+sentence-transformers>=3.0,<4.0
+
+# ── Testing ──────────────────────────────────────────────────────────
+pytest~=8.0

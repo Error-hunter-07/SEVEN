@@ -88,19 +88,20 @@ Rules:
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
 
 
-def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 400) -> dict | None:
+def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 512) -> dict | None:
     try:
         response = llm_request_lock.post_completion(
             {
-                "model": settings.llm_model,
+                "model": settings.background_llm_model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                "temperature": 0.2,
+                "temperature": 0.1,
                 "max_tokens": max_tokens,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=_REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -111,20 +112,21 @@ def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 400)
         return None
 
 
-def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 150) -> str | None:
+def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 512) -> str | None:
     """Plain-text variant for summarize_chunk() — a short note, not JSON."""
     try:
         response = llm_request_lock.post_completion(
             {
-                "model": settings.llm_model,
+                "model": settings.background_llm_model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                "temperature": 0.2,
+                "temperature": 0.1,
                 "max_tokens": max_tokens,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=_REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -229,8 +231,8 @@ def summarize_crashed(session_id, chunk_summaries=None, full_conversation_snippe
         "summary": (
             f"Session {session_id} ended without a clean shutdown after {turn_count} turn(s). "
             + (
-                "Recovered narrative: " + " ".join(chunk_summaries)[:400] if has_chunks
-                else (f"Last known state: {full_conversation_snippet[:300]}" if has_raw else "No recoverable state.")
+                "Recovered narrative: " + " ".join(chunk_summaries)[:1000] if has_chunks
+                else (f"Last known state: {full_conversation_snippet[:2000]}" if has_raw else "No recoverable state.")
             )
         ),
         "key_topics": [],
@@ -246,7 +248,7 @@ def summarize_crashed(session_id, chunk_summaries=None, full_conversation_snippe
     else:
         user_content = f"Turn count: {turn_count}\nRecovered raw conversation snippet:\n{full_conversation_snippet[:2000]}"
 
-    result = _call_llm_json(_CRASH_SUMMARY_SYSTEM, user_content, max_tokens=300)
+    result = _call_llm_json(_CRASH_SUMMARY_SYSTEM, user_content, max_tokens=1200)
     return _normalize_result(result, fallback)
 
 
@@ -261,12 +263,12 @@ def summarize_merge(episodes: list[dict]) -> dict:
 
     fallback = {
         "title": f"Merged history ({len(episodes)} episodes)",
-        "summary": " ".join(str(ep.get("summary") or "") for ep in episodes)[:600] or "No summary available.",
+        "summary": " ".join(str(ep.get("summary") or "") for ep in episodes)[:1000] or "No summary available.",
         "key_topics": sorted({t for ep in episodes for t in (ep.get("key_topics") or [])})[:6],
     }
 
     if not lines:
         return fallback
 
-    result = _call_llm_json(_MERGE_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=400)
+    result = _call_llm_json(_MERGE_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=512)
     return _normalize_result(result, fallback)

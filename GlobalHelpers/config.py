@@ -36,6 +36,13 @@ class Settings:
     llm_cli_path: str
     mmproj_path: str
 
+    # Background mini-LLM (optional — see Runtime/background_process.py).
+    # Not in _REQUIRED: existing deployments keep working main-model-only
+    # until these are set.
+    background_llm_model_path: str = ""
+    background_llm_cli_path: str = ""
+    background_llm_model: str = ""
+
     @property
     def db_connection_string(self) -> str:
         """Build a proper connection string with URL-encoded credentials."""
@@ -55,6 +62,9 @@ _REQUIRED = [
     "LLM_MODEL_PATH",
     "LLM_CLI_PATH",
     "MMPROJ_PATH",
+    "BACKGROUND_LLM_MODEL_PATH",
+    "BACKGROUND_LLM_CLI_PATH",
+    "BACKGROUND_LLM_MODEL"
 ]
 
 # Optional vars with sensible defaults
@@ -87,6 +97,9 @@ def _load_settings() -> Settings:
         llm_model_path=os.getenv("LLM_MODEL_PATH"),
         llm_cli_path=os.getenv("LLM_CLI_PATH"),
         mmproj_path=os.getenv("MMPROJ_PATH"),
+        background_llm_model_path=os.getenv("BACKGROUND_LLM_MODEL_PATH", ""),
+        background_llm_cli_path=os.getenv("BACKGROUND_LLM_CLI_PATH", ""),
+        background_llm_model=os.getenv("BACKGROUND_LLM_MODEL")
     )
 
 
