@@ -58,7 +58,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _render_conversation_snippet(messages: list, max_chars: int = 4000) -> str:
+def _render_conversation_snippet(messages: list, max_chars: int = 8000) -> str:
     """Turns the raw {role, content} message list (as saved every turn by
     active_sessions_db_client.save_full_conversation) into a compact
     text snippet for the crash summarizer — used only when NO chunk

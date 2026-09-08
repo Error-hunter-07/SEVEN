@@ -78,9 +78,12 @@ SUBGRAPH_MAX_NODES: int = 15
 # Maximum edges per node included in the subgraph context.
 SUBGRAPH_MAX_EDGES_PER_NODE: int = 5
 
+# Setting max retry counts to be attempted while suffering from timeouts - for entity_extractor And operation_proposal
+MAX_RETRIES: int = 3
+
 # LLM call timeouts (seconds)
-ENTITY_EXTRACTION_TIMEOUT: float = 45.0
-OPERATION_PROPOSAL_TIMEOUT: float = 45.0
+ENTITY_EXTRACTION_TIMEOUT: float = 300.0
+OPERATION_PROPOSAL_TIMEOUT: float = 300.0
 
 # Max tokens for each LLM call
 ENTITY_EXTRACTION_MAX_TOKENS: int = 1600

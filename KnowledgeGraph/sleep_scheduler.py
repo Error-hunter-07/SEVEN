@@ -32,6 +32,9 @@ SLEEP REPORT:
   that happened. cli.py prints summary_lines() after each /sleep call.
 """
 
+# Fix: Retry Loop fix , the sleep cycle was getting into loop of LLM call timeout fails, so added a fix to stop after exceeding MAX_RETRIES
+# 08-09-2026
+
 from __future__ import annotations
 
 import time
@@ -40,12 +43,12 @@ from typing import Optional
 
 from Database.kg_sleep_queue_client import mark_processed, count_pending
 import Database.kg_db_client as kg
-from KnowledgeGraph.constants import MAX_BATCHES_PER_SLEEP, RELATION_DEFAULT_WEIGHTS
+from KnowledgeGraph.constants import MAX_BATCHES_PER_SLEEP, RELATION_DEFAULT_WEIGHTS, MAX_RETRIES
 from KnowledgeGraph.memory_selector import get_next_batch, get_queue_status, SessionBundle
-from KnowledgeGraph.entity_extractor import extract_entities_from_bundle, ExtractionResult
+from KnowledgeGraph.entity_extractor import extract_entities_from_bundle, ExtractionResult, retries, extraction_failed
 from KnowledgeGraph.entity_resolver import resolve_entities, ResolutionResult
 from KnowledgeGraph.subgraph_retriever import fetch_subgraph
-from KnowledgeGraph.operation_proposer import propose_operations
+from KnowledgeGraph.operation_proposer import propose_operations, retries, proposer_failed
 from KnowledgeGraph.validator import validate_operations
 from GlobalHelpers.logger import get_logger
 
@@ -333,31 +336,60 @@ def run_sleep_cycle(
 
         bundle = bundles[0]   # batch_size=1
         session_id = bundle.session_id
-        report.batches_attempted += 1
 
-        if print_progress:
-            remaining = count_pending()
-            print(
-                f"[Sleep] Processing session {batch_num + 1}/{max_batches} "
-                f"({remaining} remaining): {session_id[:12]}...",
-                flush=True,
+        # Fix to prevent retry loops due to LLM response timeout
+
+        session_success = False
+
+        # Inner Loop for every session for retrying, if exceeded MAX_RETRIES then break out and end Sleep cycle
+        for attempt in range(MAX_RETRIES + 1):
+            if attempt > 0:
+                log.warning(
+                    "Retrying session %s (Attempt %d/%d)...", session_id, attempt, MAX_RETRIES
+                )
+                if print_progress:
+                    print(f"[Sleep] Retrying session {session_id[:12]}... (Attempt {attempt}/{MAX_RETRIES})", flush=True)
+
+            report.batches_attempted += 1
+            if print_progress and attempt == 0:
+                remaining = count_pending()
+                print(
+                    f"[Sleep] Processing session {batch_num + 1}/{max_batches} "
+                    f"({remaining} remaining): {session_id[:12]}...",
+                    flush=True,
+                )
+
+            try:
+                should_mark = _process_bundle(bundle, report)
+            except Exception:
+                log.exception(
+                    "run_sleep_cycle: unhandled error processing session=%s — skipping.",
+                    session_id,
+                )
+                should_mark = False
+
+            if should_mark:
+                mark_processed(session_id)
+                report.batches_completed += 1
+                session_success = True
+                report.sessions_processed += 1
+                break # Breaking the inner loop on success
+            else:
+                report.batches_skipped += 1
+    
+        if not session_success:
+            log.warning(
+                "Exceeded maximum retries (%d) for session %s. Skipping for this cycle.",
+                MAX_RETRIES, session_id
             )
-
-        try:
-            should_mark = _process_bundle(bundle, report)
-        except Exception:
-            log.exception(
-                "run_sleep_cycle: unhandled error processing session=%s — skipping.",
-                session_id,
-            )
-            should_mark = False
-
-        if should_mark:
-            mark_processed(session_id)
-            report.batches_completed += 1
-            report.sessions_processed += 1
-        else:
-            report.batches_skipped += 1
+            if print_progress:
+                print(f"[Sleep] Session {session_id[:12]} failed after all retries. Skipping to next batch.", flush=True)
+            
+            # CRITICAL FIX: Since we aren't marking it processed, `get_next_batch` 
+            # will return this exact same session on the next iteration of the main loop.
+            # We break the main cycle here to prevent a loop lock during this run.
+            log.error("Aborting sleep cycle run to prevent infinite loop on stuck session %s.", session_id)
+            break 
 
     report.elapsed_seconds = time.time() - t_start
 

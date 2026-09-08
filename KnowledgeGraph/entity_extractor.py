@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Optional
+import requests
 
 import LLMEngine.llm_request_lock as llm_request_lock
 from GlobalHelpers.config import settings
@@ -55,6 +56,9 @@ from KnowledgeGraph.constants import (
 from KnowledgeGraph.memory_selector import SessionBundle
 
 log = get_logger(__name__)
+
+# Retry count for entity_extractor LLM response timeout
+retries = 0
 
 # Built once at module load — vocabulary does not change between calls
 _SYSTEM_PROMPT: str = build_entity_extraction_system()
@@ -409,6 +413,13 @@ def extract_entities_from_bundle(
             .get("message", {})
             .get("content", "")
             .strip()
+        )
+
+        # Adding Retry logs
+    except requests.exceptions.Timeout as e:
+        retries += 1
+        log.warning(
+            "extract_entities_from_bundle: LLM call timed out, retry count = %s", retries
         )
     except Exception as e:
         log.error(

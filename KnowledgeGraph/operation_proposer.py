@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import requests
 from dataclasses import dataclass, field
 from typing import Optional
 import LLMEngine.llm_request_lock as llm_request_lock
@@ -13,6 +14,9 @@ from KnowledgeGraph.memory_selector import SessionBundle
 from KnowledgeGraph.subgraph_retriever import Subgraph
 log = get_logger(__name__)
 _SYSTEM_PROMPT = build_operation_proposal_system()
+
+# Retry count for operation_proposer LLM response timeout
+retries = 0
 
 @dataclass
 class ProposedOperation:
@@ -116,6 +120,13 @@ def propose_operations(resolved, subgraph, bundles, candidate_relations=None):
             )
         response.raise_for_status()
         raw = response.json().get("choices",[{}])[0].get("message",{}).get("content","").strip()
+
+        # Adding retry logs
+    except requests.exceptions.Timeout as e:
+        retries += 1
+        log.warning(
+            "propose_operations: LLM call timed out, retry count = %s", retries
+        )
     except Exception as e:
         log.error("propose_operations: LLM call failed: %s", e, exc_info=True); return None
     if not raw: return None
