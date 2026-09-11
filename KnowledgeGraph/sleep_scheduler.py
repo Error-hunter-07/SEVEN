@@ -45,10 +45,10 @@ from Database.kg_sleep_queue_client import mark_processed, count_pending
 import Database.kg_db_client as kg
 from KnowledgeGraph.constants import MAX_BATCHES_PER_SLEEP, RELATION_DEFAULT_WEIGHTS, MAX_RETRIES
 from KnowledgeGraph.memory_selector import get_next_batch, get_queue_status, SessionBundle
-from KnowledgeGraph.entity_extractor import extract_entities_from_bundle, ExtractionResult, retries, extraction_failed
+from KnowledgeGraph.entity_extractor import extract_entities_from_bundle, ExtractionResult
 from KnowledgeGraph.entity_resolver import resolve_entities, ResolutionResult
 from KnowledgeGraph.subgraph_retriever import fetch_subgraph
-from KnowledgeGraph.operation_proposer import propose_operations, retries, proposer_failed
+from KnowledgeGraph.operation_proposer import propose_operations
 from KnowledgeGraph.validator import validate_operations
 from GlobalHelpers.logger import get_logger
 

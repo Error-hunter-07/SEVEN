@@ -54,6 +54,7 @@ _REQUEST_TIMEOUT = 30
 _CHUNK_SUMMARY_SYSTEM = """You are a memory summarization assistant.
 Given a short slice of a conversation (a few turns), write ONE brief note yet preserving every detail (few sentences) capturing what happened in THIS slice: what was discussed, decided, or done. This is an intermediate note, not a final summary — be concise, factual, and preserve any concrete decisions, options considered, or numbers mentioned.
 Don't miss any detail, try to return one third of the original paragraph given to you. Do not invent anything on your own.
+Do not make it much shorter, keep the content as much as possible.
 Respond with ONLY the note text. No JSON, no markdown, no preamble."""
 
 _SESSION_SUMMARY_SYSTEM = """You are a memory summarization assistant.
@@ -61,7 +62,7 @@ Given a sequence of notes describing what happened across a conversation session
 
 Rules:
 - title: max 8 words, no trailing punctuation.
-- summary: 10 - 12 complete sentences, written as a NARRATIVE of the session — what was discussed, what decisions were made and why, what alternatives were considered but not chosen, what got done, what broke. This is what makes the episode different from a plain fact — capture the REASONING and SEQUENCE, not just outcomes.
+- summary: 10 - 12 complete sentences, written as a NARRATIVE of the session — what was discussed, what decisions were made and why, what alternatives were considered but not chosen, what got done, what broke. This is what makes the episode different from a plain fact — capture the REASONING and SEQUENCE, not just outcomes. Don't make it much short, keep the content as much as possible. Make sure there is no data loss from the content given to you.
 - key_topics: 1-6 short lowercase topic strings.
 - Do not invent details that aren't implied by the input.
 
@@ -70,7 +71,7 @@ Example output:
 {"title": "Ladakh trip budget planning", "summary": "User planned a 5-day Ladakh trip for 6 friends. Initially considered a relaxed sightseeing itinerary but switched to an extreme-adventure focus after the user expressed interest in intense biking. Settled on a fixed budget of 20000 rupees per person and locked the trip date to August 15th.", "key_topics": ["ladakh trip", "budget", "adventure travel"]}"""
 
 _CRASH_SUMMARY_SYSTEM = """You are a memory summarization assistant.
-Given whatever partial record survived from a conversation session that ended abruptly (crash, power loss, forced quit), produce a best-effort title, summary, and key topics from what's available. Note in the summary that the session was interrupted if that's relevant context.
+Given whatever partial record survived from a conversation session that ended abruptly (crash, power loss, forced quit), produce a best-effort title, summary, and key topics from what's available. Note in the summary that the session was interrupted if that's relevant context. Don't make it much short, keep the content as much as possible. Make sure there is no data loss from the content given to you.
 
 Rules:
 - title: max 8 words, no trailing punctuation.
@@ -80,7 +81,7 @@ Rules:
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
 
 _MERGE_SUMMARY_SYSTEM = """You are a memory summarization assistant.
-Given several older episode summaries from past sessions, merge them into ONE combined title, a 2-4 sentence summary covering the recurring themes, and a list of key topics.
+Given several older episode summaries from past sessions, merge them into ONE combined title, a 2-4 sentence summary covering the recurring themes, and a list of key topics. Don't make it much short, keep the content as much as possible. Make sure there is no data loss from the content given to you.
 
 Rules:
 - title: max 8 words, no trailing punctuation.

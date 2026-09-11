@@ -246,6 +246,15 @@ def ask_llm(query: str) -> str | None:
         if not parsed_response.strip():
             parsed_response = "Done."
 
+        # FIX: history_message["content"] was set from `text` BEFORE the
+        # pure-tool-call follow-up ran, so for any turn where the model
+        # replied with tool_calls and no inline text, the real answer
+        # (captured later in `parsed_response`) was silently dropped from
+        # both conversation history and downstream memory. Backfill it
+        # here, right before this message is persisted, so `content`
+        # always reflects what the user actually saw.
+        history_message["content"] = parsed_response or None
+
         history_manager.append_message(history_message)
 
         # Build a summary of any native tool calls so memory extraction
@@ -256,6 +265,7 @@ def ask_llm(query: str) -> str | None:
                 f"[Called {tc['function']['name']}]" for tc in native_calls
             )
         full_assistant_activity = f"{text} {tool_summary}".strip()
+        full_assistant_activity = f"{parsed_response} {tool_summary}".strip()
 
         extraction_worker.queue_turn(query, full_assistant_activity)
 
