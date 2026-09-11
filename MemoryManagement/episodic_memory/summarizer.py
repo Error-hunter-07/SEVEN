@@ -36,6 +36,8 @@ back to a cheap heuristic string-join if the LLM call fails, since a
 failed LLM call should degrade summary quality, not block the episode
 from being written at all.
 """
+# Fix - becoz the LLM was not getting proper context and was getting very short summaries, the quality of the knowledge graph generated was very poor, so increased the max tokens
+# and also few changes to the prompts so as to get proper summaries
 
 from __future__ import annotations
 
@@ -50,8 +52,8 @@ log = get_logger(__name__)
 _REQUEST_TIMEOUT = 30
 
 _CHUNK_SUMMARY_SYSTEM = """You are a memory summarization assistant.
-Given a short slice of a conversation (a few turns), write ONE brief note (1-2 sentences) capturing what happened in THIS slice: what was discussed, decided, or done. This is an intermediate note, not a final summary — be concise, factual, and preserve any concrete decisions, options considered, or numbers mentioned.
-
+Given a short slice of a conversation (a few turns), write ONE brief note yet preserving every detail (few sentences) capturing what happened in THIS slice: what was discussed, decided, or done. This is an intermediate note, not a final summary — be concise, factual, and preserve any concrete decisions, options considered, or numbers mentioned.
+Don't miss any detail, try to return one third of the original paragraph given to you. Do not invent anything on your own.
 Respond with ONLY the note text. No JSON, no markdown, no preamble."""
 
 _SESSION_SUMMARY_SYSTEM = """You are a memory summarization assistant.
@@ -59,7 +61,7 @@ Given a sequence of notes describing what happened across a conversation session
 
 Rules:
 - title: max 8 words, no trailing punctuation.
-- summary: 2-5 complete sentences, written as a NARRATIVE of the session — what was discussed, what decisions were made and why, what alternatives were considered but not chosen, what got done, what broke. This is what makes the episode different from a plain fact — capture the REASONING and SEQUENCE, not just outcomes.
+- summary: 10 - 12 complete sentences, written as a NARRATIVE of the session — what was discussed, what decisions were made and why, what alternatives were considered but not chosen, what got done, what broke. This is what makes the episode different from a plain fact — capture the REASONING and SEQUENCE, not just outcomes.
 - key_topics: 1-6 short lowercase topic strings.
 - Do not invent details that aren't implied by the input.
 
@@ -72,7 +74,7 @@ Given whatever partial record survived from a conversation session that ended ab
 
 Rules:
 - title: max 8 words, no trailing punctuation.
-- summary: 1-3 complete sentences describing what was happening based on the available record.
+- summary: 10 - 12 complete sentences describing what was happening based on the available record.
 - key_topics: 1-5 short lowercase topic strings.
 
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
@@ -82,13 +84,13 @@ Given several older episode summaries from past sessions, merge them into ONE co
 
 Rules:
 - title: max 8 words, no trailing punctuation.
-- summary: 2-4 complete sentences capturing the recurring themes across all the episodes, not a list of each one.
+- summary: 10 - 12 complete sentences capturing the recurring themes across all the episodes, not a list of each one.
 - key_topics: 1-6 short lowercase topic strings, deduplicated across the episodes.
 
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
 
 
-def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 512) -> dict | None:
+def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 1600) -> dict | None:
     try:
         response = llm_request_lock.post_completion(
             {
@@ -112,7 +114,7 @@ def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 512)
         return None
 
 
-def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 512) -> str | None:
+def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 1600) -> str | None:
     """Plain-text variant for summarize_chunk() — a short note, not JSON."""
     try:
         response = llm_request_lock.post_completion(
@@ -179,7 +181,7 @@ def summarize_chunk(turns: list[tuple[str, str]]) -> str | None:
     lines = [f"User: {u}\nAssistant: {a}" for u, a in turns if u or a]
     if not lines:
         return None
-    return _call_llm_text(_CHUNK_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=150)
+    return _call_llm_text(_CHUNK_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=1024)
 
 
 def summarize_session(goal, completed_subtasks, memory_updates, last_error, turn_count, chunk_summaries=None) -> dict:
@@ -212,7 +214,7 @@ def summarize_session(goal, completed_subtasks, memory_updates, last_error, turn
     if not chunk_summaries and not goal and not completed_subtasks:
         return fallback
 
-    result = _call_llm_json(_SESSION_SUMMARY_SYSTEM, "\n".join(parts), max_tokens=400)
+    result = _call_llm_json(_SESSION_SUMMARY_SYSTEM, "\n".join(parts), max_tokens=1600)
     return _normalize_result(result, fallback)
 
 
@@ -231,8 +233,8 @@ def summarize_crashed(session_id, chunk_summaries=None, full_conversation_snippe
         "summary": (
             f"Session {session_id} ended without a clean shutdown after {turn_count} turn(s). "
             + (
-                "Recovered narrative: " + " ".join(chunk_summaries)[:1000] if has_chunks
-                else (f"Last known state: {full_conversation_snippet[:2000]}" if has_raw else "No recoverable state.")
+                "Recovered narrative: " + " ".join(chunk_summaries)[:2000] if has_chunks
+                else (f"Last known state: {full_conversation_snippet[:4000]}" if has_raw else "No recoverable state.")
             )
         ),
         "key_topics": [],
@@ -248,7 +250,7 @@ def summarize_crashed(session_id, chunk_summaries=None, full_conversation_snippe
     else:
         user_content = f"Turn count: {turn_count}\nRecovered raw conversation snippet:\n{full_conversation_snippet[:2000]}"
 
-    result = _call_llm_json(_CRASH_SUMMARY_SYSTEM, user_content, max_tokens=1200)
+    result = _call_llm_json(_CRASH_SUMMARY_SYSTEM, user_content, max_tokens=1600)
     return _normalize_result(result, fallback)
 
 
@@ -263,12 +265,12 @@ def summarize_merge(episodes: list[dict]) -> dict:
 
     fallback = {
         "title": f"Merged history ({len(episodes)} episodes)",
-        "summary": " ".join(str(ep.get("summary") or "") for ep in episodes)[:1000] or "No summary available.",
+        "summary": " ".join(str(ep.get("summary") or "") for ep in episodes)[:2000] or "No summary available.",
         "key_topics": sorted({t for ep in episodes for t in (ep.get("key_topics") or [])})[:6],
     }
 
     if not lines:
         return fallback
 
-    result = _call_llm_json(_MERGE_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=512)
+    result = _call_llm_json(_MERGE_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=1600)
     return _normalize_result(result, fallback)
