@@ -19,6 +19,25 @@ Actual deletion of expired rows (so the DB file doesn't grow forever)
 happens in Database/working_memory_lifecycle.py, run at startup —
 mirroring the existing MemoryManagement/semantic_memory/memory_lifecycle.py
 decay/prune pattern.
+
+ADDED (reflection layer):
+  get_by_type(session_id, memory_type)
+      Session-scoped fetch by memory_type. Used by session-end
+      consolidation to retrieve all reflection rows created during
+      the current session before deciding which to keep or delete.
+
+  get_active_reflections_all_sessions(limit)
+      Cross-session fetch of all non-expired reflection rows, ordered
+      by priority DESC then created_at DESC. Intentionally NOT filtered
+      by session_id — reflections are meant to persist and influence
+      behaviour across sessions. Used by PromptBuilder to build the
+      live directive block that gets injected on every turn.
+
+  delete_working_memory(memory_id)
+      Hard DELETE by primary key. Used by session-end consolidation to
+      permanently remove low-value reflection rows that the LLM judged
+      as noise. Distinct from TTL expiry (which is passive/scheduled)
+      — this is an immediate, intentional removal.
 """
 
 import json
@@ -204,3 +223,113 @@ def get_all_current_session_working_memory(session_id):
     except Exception as e:
         log.error("get_all_current_session_working_memory error: %s", e, exc_info=True)
         return None
+
+
+def get_by_type(session_id: str, memory_type: str) -> list[tuple]:
+    """
+    Returns all non-expired, active rows for a given session_id filtered
+    by memory_type, ordered newest-first.
+
+    Typical caller: session-end consolidation in
+    SessionManager/session_lifecycle.py, which fetches all
+    memory_type='reflection' rows written during the just-ended session
+    before making the keep/delete/promote decision.
+
+    Returns [] (not None) on an empty result so callers can iterate
+    safely without a None-guard.
+    """
+    conn = local_db.get_connection()
+    now = _now()
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, memory_type, key, value, priority, relevance,
+                   created_at, updated_at, expires_at, source, tags
+            FROM working_memory
+            WHERE session_id = ?
+              AND memory_type = ?
+              AND active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY created_at DESC
+            """,
+            (session_id, memory_type, now),
+        )
+        return [_row_to_tuple(r) for r in cur.fetchall()]
+    except Exception as e:
+        log.error("get_by_type(%s, %s) error: %s", session_id, memory_type, e, exc_info=True)
+        return []
+
+
+def get_active_reflections_all_sessions(limit: int = 10) -> list[tuple]:
+    """
+    Returns the top `limit` non-expired reflection rows across ALL
+    sessions, ordered by priority DESC then created_at DESC.
+
+    No session_id filter — reflections are cross-session by design.
+    A reflection written in session N should still influence behaviour
+    in session N+5 until its expires_at passes or it is explicitly
+    deleted by consolidation.
+
+    Caller: PromptBuilder/prompt_builder.py — called on every turn to
+    build the SELF-CORRECTION DIRECTIVES block. Must be fast (SQLite
+    index scan on memory_type + active + expires_at). Limit keeps the
+    directive block token-bounded; callers should not raise this above
+    ~10 without also capping the formatted output by token count.
+    """
+    conn = local_db.get_connection()
+    now = _now()
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, memory_type, key, value, priority, relevance,
+                   created_at, updated_at, expires_at, source, tags
+            FROM working_memory
+            WHERE memory_type = 'reflection'
+              AND active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY priority DESC, created_at DESC
+            LIMIT ?
+            """,
+            (now, limit),
+        )
+        return [_row_to_tuple(r) for r in cur.fetchall()]
+    except Exception as e:
+        log.error("get_active_reflections_all_sessions error: %s", e, exc_info=True)
+        return []
+
+
+def delete_working_memory(memory_id: str) -> bool:
+    """
+    Hard DELETE of a single row by primary key.
+
+    Used by session-end consolidation
+    (SessionManager/session_lifecycle.py) to permanently remove
+    reflection rows judged as low-value noise. This is an intentional,
+    immediate removal — not the passive TTL expiry handled by
+    MemoryManagement/working_memory/memory_lifecycle.py.
+
+    Returns True if exactly one row was deleted, False if the id was
+    not found or the delete failed.
+    """
+    if not memory_id:
+        log.warning("delete_working_memory: called with empty memory_id — skipping.")
+        return False
+    conn = local_db.get_connection()
+    try:
+        cur = conn.execute(
+            "DELETE FROM working_memory WHERE id = ?",
+            (memory_id,),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            log.warning(
+                "delete_working_memory: no row matched id=%s — nothing deleted.",
+                memory_id,
+            )
+            return False
+        log.debug("delete_working_memory: deleted id=%s.", memory_id)
+        return True
+    except Exception as e:
+        log.error("delete_working_memory(%s) error: %s", memory_id, e, exc_info=True)
+        conn.rollback()
+        return False

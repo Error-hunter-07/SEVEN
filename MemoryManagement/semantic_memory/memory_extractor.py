@@ -89,15 +89,16 @@ def _extract_facts_from_snippet(conversation_snippet: str) -> list[dict]:
     try:
         response = llm_request_lock.post_completion(
             {
-                "model": settings.llm_model,
+                "model": settings.background_llm_model,
                 "messages": [
                     {"role": "system", "content": _EXTRACTION_SYSTEM},
                     {"role": "user", "content": conversation_snippet},
                 ],
-                "temperature": 0.2,
+                "temperature": 0.1,
                 "max_tokens": 512,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=30,
         )
         response.raise_for_status()
@@ -156,15 +157,16 @@ def _extract_facts(user_message: str, assistant_reply: str) -> list[dict]:
     try:
         response = llm_request_lock.post_completion(
             {
-                "model":       settings.llm_model,
+                "model":       settings.background_llm_model,
                 "messages": [
                     {"role": "system", "content": _EXTRACTION_SYSTEM},
                     {"role": "user",   "content": conversation_snippet},
                 ],
-                "temperature": 0.2,   # low temp for precise facts
+                "temperature": 0.1,   # low temp for precise facts
                 "max_tokens":  512,
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            role="background",
             timeout=30,
         )
         response.raise_for_status()

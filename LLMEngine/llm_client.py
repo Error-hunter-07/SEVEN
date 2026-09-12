@@ -29,13 +29,13 @@ if __package__ is None or __package__ == "":
 from Tools.scratchpad_tool import get_scratchpad_memory
 
 try:
-    from .response_parser import parse_response
+    from .response_parser import strip_tool_call_tags, format_for_display
 except ImportError:
-    from response_parser import parse_response
+    from response_parser import strip_tool_call_tags, format_for_display
 
 import requests
 import PromptBuilder.prompt_builder as prompt_builder
-from Runtime.process_manager import ProcessManager
+import Runtime.process_manager as process_manager_module
 import ToolCalling.executor as tool_executor
 
 from Database.chroma_db import wait_for_chroma
@@ -55,15 +55,19 @@ import Database.active_sessions_db_client as active_sessions_db_client
 configure_logging()
 log = get_logger(__name__)
 
-process_manager = ProcessManager(
-    model_path=settings.llm_model_path,
-    llama_cli_path=settings.llm_cli_path,
-    mmproj_path=settings.mmproj_path
-)
+# CHANGED (background mini-LLM): previously constructed ProcessManager
+# directly here for the one-and-only model. Now there are two roles —
+# see Runtime/main_process.py (role="main", this is what `process_manager`
+# below refers to — .session_id and .start_for_client() etc. all still
+# work exactly as before) and Runtime/background_process.py
+# (role="background", a small CPU-only model for memory extraction/
+# summarization). bootstrap_all_models() starts main BLOCKING (same
+# timing as before — the user waits on this one) and background
+# NON-BLOCKING on a daemon thread (loads in parallel, doesn't delay chat
+# start), then returns the main instance.
+process_manager = process_manager_module.bootstrap_all_models()
 
 try:
-    process_manager.start_for_client()
-
     # Wait for ChromaDB to finish loading in parallel with llama-server
     if not wait_for_chroma(timeout=120):
         log.warning("ChromaDB did not initialize in time.")
@@ -135,7 +139,7 @@ def request_completion(request_messages: list[dict], use_tools: bool = True) -> 
             for tool in registry.list_tools()
         ]
 
-    response = llm_request_lock.post_completion(payload, timeout=120)
+    response = llm_request_lock.post_completion(payload, timeout=180)
     response.raise_for_status()
     data    = response.json()
     choice  = data.get("choices", [{}])[0]
@@ -212,7 +216,13 @@ def ask_llm(query: str) -> str | None:
         if native_calls:
             history_message["tool_calls"] = native_calls
 
-        parsed_response = parse_response(text) if text else ""
+        # FIX: use strip_tool_call_tags(), not the old ANSI-formatting
+        # parse_response(). This value gets stored into conversation
+        # history, the chunk-summary accumulator, and the crash backup —
+        # it must stay plain text. ANSI formatting is applied once, only
+        # at the very end of this function, right before returning for
+        # printing (see format_for_display() call below).
+        parsed_response = strip_tool_call_tags(text) if text else ""
 
         # If there's no text (pure tool-call reply), ask for a follow-up text reply
         if not parsed_response.strip():
@@ -234,13 +244,22 @@ def ask_llm(query: str) -> str | None:
                 # second half of a truncation -> 500 error chain seen in
                 # production logs.
                 follow_result = request_completion(follow_messages, use_tools=False)
-                parsed_response = parse_response(follow_result["text"])
+                parsed_response = strip_tool_call_tags(follow_result["text"])
             except requests.exceptions.HTTPError as e:
                 log.error("Follow-up completion failed: %s", e, exc_info=True)
-                parsed_response = text or "I ran into an issue finishing that response — could you try rephrasing or asking again?"
+                parsed_response = strip_tool_call_tags(text) if text else "I ran into an issue finishing that response — could you try rephrasing or asking again?"
 
         if not parsed_response.strip():
             parsed_response = "Done."
+
+        # FIX: history_message["content"] was set from `text` BEFORE the
+        # pure-tool-call follow-up ran, so for any turn where the model
+        # replied with tool_calls and no inline text, the real answer
+        # (captured later in `parsed_response`) was silently dropped from
+        # both conversation history and downstream memory. Backfill it
+        # here, right before this message is persisted, so `content`
+        # always reflects what the user actually saw.
+        history_message["content"] = parsed_response or None
 
         history_manager.append_message(history_message)
 
@@ -252,6 +271,7 @@ def ask_llm(query: str) -> str | None:
                 f"[Called {tc['function']['name']}]" for tc in native_calls
             )
         full_assistant_activity = f"{text} {tool_summary}".strip()
+        full_assistant_activity = f"{parsed_response} {tool_summary}".strip()
 
         extraction_worker.queue_turn(query, full_assistant_activity)
 
@@ -295,7 +315,13 @@ def ask_llm(query: str) -> str | None:
             log.exception("Failed to save full_conversation backup (non-fatal).")
 
         log.debug(get_scratchpad_memory())
-        return parsed_response
+        # FIX: ANSI terminal formatting is applied HERE ONLY, on the way
+        # out to the caller for printing (LLMEngine/cli.py just prints
+        # this return value). Everything stored above this line —
+        # history_message["content"], _current_chunk_turns,
+        # full_assistant_activity, and the full_conversation backup —
+        # used the plain `parsed_response` and never sees ANSI codes.
+        return format_for_display(parsed_response)
 
     except requests.exceptions.ConnectionError:
         log.error("Could not connect to local LLM server at :8081.")
