@@ -137,6 +137,34 @@ class ProcessManager:
 
             "--cont-batching",
 
+            # FIX: required for `chat_template_kwargs` (e.g.
+            # `{"enable_thinking": False}`) to have any effect at all.
+            # llama-server only reads chat_template_kwargs when it's
+            # rendering the prompt through the model's own Jinja chat
+            # template — WITHOUT --jinja it uses a minimal built-in
+            # template matcher that ignores that field entirely. This
+            # field is sent in 7 places across the codebase
+            # (LLMEngine/reflection_worker.py, KnowledgeGraph/
+            # operation_proposer.py, KnowledgeGraph/entity_extractor.py,
+            # SessionManager/session_lifecycle.py, MemoryManagement/
+            # semantic_memory/memory_extractor.py, and both calls in
+            # MemoryManagement/episodic_memory/summarizer.py) — all of
+            # them expecting it to suppress chain-of-thought, and all of
+            # them silently no-ops until now. On a thinking-capable model
+            # (e.g. Qwen3-family), that means background/extraction
+            # calls were burning most of their max_tokens budget on
+            # hidden reasoning before ever writing the requested output —
+            # which is exactly the "same ~7-word summary no matter what
+            # the prompt says" symptom this was chasing.
+            # NOTE: this changes prompt rendering for BOTH roles (main
+            # and background), since command-building is shared. Watch
+            # the main role's tool-calling behavior after this change —
+            # ToolCalling/parser.py's custom tag-based parsing doesn't
+            # depend on llama-server's native template features, so it
+            # should be unaffected, but verify against your actual model
+            # rather than assuming.
+            "--jinja",
+
             "--host", "127.0.0.1",
 
             "--port", str(self.port)

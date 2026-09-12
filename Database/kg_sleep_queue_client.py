@@ -229,6 +229,20 @@ def count_pending() -> int:
         return -1
 
 
+def count_total() -> int:
+    """
+    Total number of sessions ever enqueued (pending + processed). Used
+    alongside count_pending() for progress reporting (e.g.
+    "3 pending / 40 total"). Returns -1 on error.
+    """
+    conn = local_db.get_connection()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM kg_sleep_queue").fetchone()[0]
+    except Exception as e:
+        log.error("count_total error: %s", e, exc_info=True)
+        return -1
+
+
 def delete_processed(older_than_days: int = 7) -> int:
     """
     Delete processed rows older than `older_than_days`. Pending rows

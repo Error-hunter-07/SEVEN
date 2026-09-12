@@ -417,10 +417,20 @@ def extract_entities_from_bundle(
 
         # Adding Retry logs
     except requests.exceptions.Timeout as e:
+        # FIX: `retries += 1` is an assignment, so Python treated `retries`
+        # as a local name here and raised UnboundLocalError on every
+        # timeout (it's only assigned at module scope) — meaning a slow
+        # background model didn't retry/log cleanly, it crashed this
+        # function with an unrelated-looking traceback instead of
+        # returning None like every other failure path below does.
+        global retries
         retries += 1
         log.warning(
-            "extract_entities_from_bundle: LLM call timed out, retry count = %s", retries
+            "extract_entities_from_bundle: LLM call timed out (retry count=%s), "
+            "session=%s will stay pending in kg_sleep_queue for the next /sleep.",
+            retries, session_id,
         )
+        return None
     except Exception as e:
         log.error(
             "extract_entities_from_bundle: LLM call failed for session=%s: %s",

@@ -10,11 +10,23 @@ from racing the main chat turn or the semantic-memory extractor.
 
 Four entry points now, one per caller:
   summarize_chunk()    — rolling, every 5 turns, called by
-                          LLMEngine/chunk_summary_worker.py. Short and
-                          cheap (max_tokens=150) — a rough narrative
-                          note, not a polished summary, since it gets
-                          compressed again by summarize_session() at
-                          session end.
+                          LLMEngine/chunk_summary_worker.py. A rough
+                          narrative note, not a polished summary, since
+                          it gets compressed again by summarize_session()
+                          at session end. max_tokens=1400 — generous on
+                          purpose (see the "Fix" note this file already
+                          carried: a too-low max_tokens previously
+                          produced implausibly short summaries in
+                          production). Retries once with a stronger
+                          prompt, then falls back to a cheap extractive
+                          note, if the model's output looks too thin for
+                          how much source material it was given — see
+                          _looks_too_thin() below. summarize_session()/
+                          summarize_crashed() below still cap how many
+                          of these get concatenated into one prompt (see
+                          _build_chunk_narrative()), so a long session
+                          with many chunks still can't silently overflow
+                          the background model's 8192-token context.
   summarize_session()  — normal clean session end. Merges whatever
                           rolling chunk summaries exist (NOT the raw
                           transcript — by session end that's usually too
@@ -52,10 +64,32 @@ log = get_logger(__name__)
 _REQUEST_TIMEOUT = 30
 
 _CHUNK_SUMMARY_SYSTEM = """You are a memory summarization assistant.
-Given a short slice of a conversation (a few turns), write ONE brief note yet preserving every detail (few sentences) capturing what happened in THIS slice: what was discussed, decided, or done. This is an intermediate note, not a final summary — be concise, factual, and preserve any concrete decisions, options considered, or numbers mentioned.
-Don't miss any detail, try to return one third of the original paragraph given to you. Do not invent anything on your own.
-Do not make it much shorter, keep the content as much as possible.
+Given a short slice of a conversation (a few turns), write a note of 4-8 sentences (at least 60 words) capturing what happened in THIS slice: what was discussed, decided, or done. This is an intermediate note, not a final summary — it will be compressed again later, so favor concrete, checkable facts over vague reflection.
+
+You MUST:
+- Name every specific person, place, object, or named entity that appears in the turns below (do not write generic phrases like "the story continues" instead of the actual names).
+- Include any concrete decisions made, specific numbers, and options that were considered but rejected.
+- Cover the SLICE AS A WHOLE, in order — not just the most recent turn. If five turns are given, your note must reflect content from across all five, not only the last one.
+
+Do not invent anything that isn't in the conversation. Do not repeat the same sentence or phrase more than once. A short, vague, or generic note is a failed note — be specific.
 Respond with ONLY the note text. No JSON, no markdown, no preamble."""
+
+# A retry system prompt used the ONE time the first attempt comes back
+# implausibly short/vague for how much source material it was given (see
+# _looks_too_thin() below). Explicitly naming the failure mode gets a
+# small model to actually correct it, rather than repeating the same
+# generic non-answer a second time.
+_CHUNK_SUMMARY_RETRY_SYSTEM = _CHUNK_SUMMARY_SYSTEM + """
+
+Your previous attempt at this exact task was rejected for being too short/vague — it read something like generic filler ("the story continues", "they discussed various things") instead of naming the actual people, places, objects, and events from the conversation. Do not repeat that mistake. Write the specific note now."""
+
+# Below this word count, a chunk summary is almost certainly the "generic
+# one-liner" failure mode seen in production (a 5-turn, several-hundred-
+# word slice compressed to a single vague sentence with zero named
+# entities) rather than a genuinely uneventful slice. Used to trigger one
+# retry with a more explicit prompt before falling back to an extractive
+# note — see summarize_chunk() below.
+_MIN_CHUNK_SUMMARY_WORDS = 25
 
 _SESSION_SUMMARY_SYSTEM = """You are a memory summarization assistant.
 Given a sequence of notes describing what happened across a conversation session (in order), plus some structured signals, produce a title, a summary, and key topics.
@@ -91,6 +125,46 @@ Rules:
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
 
 
+import re
+
+_REASONING_BLOCK = re.compile(
+    r"<(think|thinking|reasoning)>.*?</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_hidden_reasoning(text: str | None) -> str | None:
+    """
+    Defense-in-depth against chain-of-thought leaking into what's
+    supposed to be a plain summary/JSON response. The real fix is
+    Runtime/process_manager.py's --jinja flag (without it,
+    chat_template_kwargs={"enable_thinking": False} is silently
+    ignored by llama-server) — this is a second layer in case a given
+    model/template still emits visible <think>/<thinking>/<reasoning>
+    tags regardless, or in case --jinja hasn't been deployed yet.
+    Logs a warning with the approximate token cost when it strips
+    something, since that number is exactly what explains "the model
+    gives the same short answer no matter what the prompt says": the
+    reasoning ate the max_tokens budget before real content began.
+    """
+    if not text:
+        return text
+    match = _REASONING_BLOCK.search(text)
+    if not match:
+        return text
+    stripped = _REASONING_BLOCK.sub("", text).strip()
+    log.warning(
+        "Stripped a hidden reasoning block from LLM output (~%d chars / "
+        "~%d tokens) — if this appears often, chat_template_kwargs' "
+        "enable_thinking=False isn't taking effect for this model; see "
+        "Runtime/process_manager.py's --jinja flag. Remaining content "
+        "(%d words): %r",
+        len(match.group(0)), len(match.group(0)) // 4,
+        _word_count(stripped), stripped[:200],
+    )
+    return stripped
+
+
 def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 1600) -> dict | None:
     try:
         response = llm_request_lock.post_completion(
@@ -109,6 +183,7 @@ def _call_llm_json(system_prompt: str, user_content: str, max_tokens: int = 1600
         )
         response.raise_for_status()
         raw_text = response.json().get("choices", [{}])[0].get("message", {}).get("content") or "{}"
+        raw_text = _strip_hidden_reasoning(raw_text) or "{}"
         return _parse_json_object(raw_text)
     except Exception as e:
         log.error("Episodic summarizer LLM call failed: %s", e, exc_info=True)
@@ -134,6 +209,7 @@ def _call_llm_text(system_prompt: str, user_content: str, max_tokens: int = 1600
         )
         response.raise_for_status()
         text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        text = _strip_hidden_reasoning(text)
         return text or None
     except Exception as e:
         log.error("Chunk summarizer LLM call failed: %s", e, exc_info=True)
@@ -169,6 +245,94 @@ def _normalize_result(result: dict | None, fallback: dict) -> dict:
     return {"title": title, "summary": summary, "key_topics": key_topics}
 
 
+# Rough char budget for the chunk-summary narrative block handed to the
+# background model. The background server runs with ctx_size=8192 (see
+# Runtime/background_process.py) shared between the system prompt, this
+# narrative, any other structured signals, AND the completion's
+# max_tokens (up to 1600 for summarize_session/summarize_crashed). ~4
+# chars/token is a conservative estimate for English text, so this stays
+# comfortably under budget even on longer sessions instead of relying on
+# llama-server to fail gracefully (or context-shift and silently drop
+# older content) when the prompt runs too long.
+_CHUNK_NARRATIVE_CHAR_BUDGET = 12000
+
+
+def _build_chunk_narrative(chunk_summaries: list[str]) -> tuple[list[str], bool]:
+    """
+    Returns (numbered narrative lines, was_truncated). Keeps the MOST
+    RECENT chunk summaries within _CHUNK_NARRATIVE_CHAR_BUDGET rather than
+    the earliest ones — the end of a session is usually what a "what
+    happened" summary most needs to get right, and silently dropping the
+    tail (as an unbounded prompt would risk via context-shift) is worse.
+    """
+    if not chunk_summaries:
+        return [], False
+
+    kept: list[str] = []
+    total_chars = 0
+    truncated = False
+    for s in reversed(chunk_summaries):
+        total_chars += len(s)
+        if total_chars > _CHUNK_NARRATIVE_CHAR_BUDGET and kept:
+            truncated = True
+            break
+        kept.append(s)
+    kept.reverse()
+
+    offset = len(chunk_summaries) - len(kept)
+    lines = [f"  {i + offset + 1}. {s}" for i, s in enumerate(kept)]
+    if truncated:
+        lines.insert(0, f"  (earliest {offset} chunk note(s) omitted — over length budget)")
+    return lines, truncated
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _looks_too_thin(summary: str, source_lines: list[str]) -> bool:
+    """
+    Heuristic for the exact failure mode seen in production: a 5-turn,
+    several-hundred-word slice (multiple named characters, concrete plot
+    events) compressed into a single vague sentence with no specifics.
+    Deliberately cheap/string-based (no LLM call) — this just decides
+    whether it's worth spending a retry, not whether the content is
+    "good" in any deep sense.
+    """
+    if not summary:
+        return True
+    source_words = sum(_word_count(l) for l in source_lines)
+    # Only flag slices that actually had enough source material that a
+    # near-empty summary is implausible — a genuinely short/quiet slice
+    # (e.g. two one-line turns) legitimately earns a short note.
+    if source_words < 40:
+        return False
+    return _word_count(summary) < _MIN_CHUNK_SUMMARY_WORDS
+
+
+def _extractive_fallback(turns: list[tuple[str, str]]) -> str:
+    """
+    Last-resort note when the LLM produces thin output twice in a row
+    (initial attempt + retry). Not a real summary — just the first
+    sentence of each user message and each assistant reply, stitched
+    together — but it preserves actual names/nouns from the
+    conversation instead of storing another vague LLM sentence that
+    entity extraction can do nothing with. Better than empty; still
+    clearly inferior to the LLM path, which is why this only runs after
+    two failed LLM attempts.
+    """
+    import re
+    parts: list[str] = []
+    for u, a in turns:
+        for speaker, text in (("User", u), ("Assistant", a)):
+            if not text:
+                continue
+            first_sentence = re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)[0]
+            if first_sentence:
+                parts.append(f"{speaker}: {first_sentence.strip()[:200]}")
+    return " ".join(parts)[:1500] or None
+
+
 def summarize_chunk(turns: list[tuple[str, str]]) -> str | None:
     """
     Rolling summary of a small slice of turns (typically 5). Returns a
@@ -176,13 +340,56 @@ def summarize_chunk(turns: list[tuple[str, str]]) -> str | None:
     episode. Returns None if the LLM call fails; callers should skip
     appending a chunk summary rather than storing a fabricated one
     (the raw full_conversation backup still covers this slice either way).
+
+    Retries once with a more explicit prompt if the first attempt looks
+    implausibly thin for how much source material it was given (see
+    _looks_too_thin()), then falls back to a cheap extractive note if the
+    retry is also thin — a chunk summary this app relies on as the
+    "primary extraction signal" for the knowledge graph must never
+    silently collapse into an uninformative one-liner.
     """
     if not turns:
         return None
     lines = [f"User: {u}\nAssistant: {a}" for u, a in turns if u or a]
     if not lines:
         return None
-    return _call_llm_text(_CHUNK_SUMMARY_SYSTEM, "\n".join(lines), max_tokens=1024)
+
+    user_content = "\n".join(lines)
+
+    # max_tokens=1400: bumped up from 900 as extra headroom on top of the
+    # --jinja fix in Runtime/process_manager.py (which is what actually
+    # makes enable_thinking=False take effect). Belt-and-suspenders: if
+    # some hidden reasoning still leaks through for a given model/
+    # template, this leaves more room for real content after it, and
+    # _strip_hidden_reasoning() above removes any <think> block that
+    # does show up in the final text either way. Still comfortably
+    # inside the background model's 8192-token context for a 5-turn slice.
+    summary = _call_llm_text(_CHUNK_SUMMARY_SYSTEM, user_content, max_tokens=1400)
+    log.debug("summarize_chunk: first attempt (%d words): %r",
+              _word_count(summary or ""), (summary or "")[:300])
+
+    if _looks_too_thin(summary or "", lines):
+        log.warning(
+            "summarize_chunk: first attempt looks too thin (%d word(s) for "
+            "%d source line(s)) — retrying with a more explicit prompt.",
+            _word_count(summary or ""), len(lines),
+        )
+        retry = _call_llm_text(_CHUNK_SUMMARY_RETRY_SYSTEM, user_content, max_tokens=1400)
+        log.debug("summarize_chunk: retry attempt (%d words): %r",
+                  _word_count(retry or ""), (retry or "")[:300])
+        if retry and not _looks_too_thin(retry, lines):
+            summary = retry
+        elif retry:
+            # Retry didn't help — prefer the extractive fallback over
+            # either thin LLM attempt so at least real names/nouns from
+            # the conversation survive into the stored chunk summary.
+            log.warning(
+                "summarize_chunk: retry also looked thin — falling back "
+                "to an extractive note for this chunk."
+            )
+            summary = _extractive_fallback(turns) or summary or retry
+
+    return summary
 
 
 def summarize_session(goal, completed_subtasks, memory_updates, last_error, turn_count, chunk_summaries=None) -> dict:
@@ -194,8 +401,8 @@ def summarize_session(goal, completed_subtasks, memory_updates, last_error, turn
     parts = []
     if chunk_summaries:
         parts.append("Session narrative (in order):")
-        for i, s in enumerate(chunk_summaries, 1):
-            parts.append(f"  {i}. {s}")
+        narrative_lines, _truncated = _build_chunk_narrative(chunk_summaries)
+        parts.extend(narrative_lines)
     if goal:
         parts.append(f"Goal: {goal}")
     if completed_subtasks:
@@ -245,9 +452,8 @@ def summarize_crashed(session_id, chunk_summaries=None, full_conversation_snippe
         return fallback
 
     if has_chunks:
-        user_content = f"Turn count: {turn_count}\nRecovered session notes (in order):\n" + "\n".join(
-            f"  {i}. {s}" for i, s in enumerate(chunk_summaries, 1)
-        )
+        narrative_lines, _truncated = _build_chunk_narrative(chunk_summaries)
+        user_content = f"Turn count: {turn_count}\nRecovered session notes (in order):\n" + "\n".join(narrative_lines)
     else:
         user_content = f"Turn count: {turn_count}\nRecovered raw conversation snippet:\n{full_conversation_snippet[:2000]}"
 
