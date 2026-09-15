@@ -17,9 +17,8 @@ from GlobalHelpers.logger import get_logger
 
 log = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
 # Internal: keyword index maintenance
-# ---------------------------------------------------------------------------
+
 
 def _index_node_keywords(node_id: str, name: str, heading: str) -> int:
     """
@@ -46,9 +45,7 @@ def _index_node_keywords(node_id: str, name: str, heading: str) -> int:
     return inserted
 
 
-# ---------------------------------------------------------------------------
 # Alias functions
-# ---------------------------------------------------------------------------
 
 def add_alias(node_id: str, alias: str) -> bool:
     """
@@ -228,10 +225,7 @@ def delete_alias(node_id: str, alias: str) -> bool:
         )
         return False
 
-
-# ---------------------------------------------------------------------------
 # Keyword index functions
-# ---------------------------------------------------------------------------
 
 def add_keyword(node_id: str, keyword: str) -> bool:
     """
