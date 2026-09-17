@@ -1,3 +1,22 @@
+"""
+MemoryManagement/shortterm_memory/scratchpad.py
+
+In-memory scratchpad that tracks planning state, execution context, reflection
+notes, tool outputs, and memory update audit trails for the CURRENT turn.
+Injected into every system prompt as the highest-priority context block.
+
+No disk persistence — resets completely at session start. The LLM writes to
+the scratchpad via tool calls (Tools/scratchpad_tool.py), and
+PromptBuilder compiles it into a formatted text block on every turn.
+
+State structure:
+  planning:       current_goal, subtasks, completed_subtasks, current_step,
+                  next_action
+  execution:      active_tool, retry_count, last_error
+  reflection:     seven_notes (free-text reasoning)
+  tool_outputs:   {tool_name: last_output} audit trail
+"""
+
 import json
 
 from .summarizer import compiled_scratchpad_memory

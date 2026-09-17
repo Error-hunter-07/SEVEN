@@ -1,3 +1,25 @@
+"""
+GlobalHelpers/logger.py
+
+Centralized logging configuration with session-aware context injection.
+
+Every log line includes the current session_id via a contextvars.ContextVar,
+which propagates correctly into background threads (extraction_worker,
+chunk_summary_worker, reflection_worker) via contextvars.copy_context().
+
+Three handler layers:
+  1. app.log   — INFO+ rotating file (5MB × 5 backups)
+  2. errors.log — WARNING+ rotating file (5MB × 5 backups)
+  3. console   — INFO+ to stdout
+
+A per-session file handler can be attached at session start for full
+debug-level logging of that session only.
+
+Windows UTF-8 fix: both stdout and stderr are reconfigured to UTF-8
+with errors="replace" at module load time, preventing UnicodeEncodeError
+when log messages contain ₹, emoji, or non-English scripts.
+"""
+
 # GlobalHelpers/logger.py
 import logging
 import os

@@ -1,3 +1,22 @@
+"""
+ToolCalling/register.py
+
+Central registry of all tools the LLM can call. The ToolRegistry maps
+tool names to Tool objects (name, description, parameters, callable).
+
+Tools are registered once at module load time. The LLM sees them as
+OpenAI-compatible function schemas via LLMEngine/tool_schema.py, and
+ToolCalling/executor.py dispatches incoming tool calls to the matching
+registered function.
+
+Current registered tools:
+  - Scratchpad: update/get state, summaries, goals, subtasks
+  - Working memory: insert/update/get entries
+  - Semantic memory: store/search long-term facts
+  - Episodic memory: search/browse past sessions
+  - Knowledge Graph: query entity relationships
+"""
+
 from Tools.tool import Tool
 import Tools.scratchpad_tool as scratchpad_tool
 import Tools.working_memory_tool as working_memory_tool

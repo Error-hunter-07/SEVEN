@@ -1,3 +1,20 @@
+"""
+Tools/working_memory_tool.py
+
+LLM-facing bridge to the working memory SQLite layer. The LLM never touches
+the database directly — it calls these functions through tool_calls.
+
+Two tools are exposed to the LLM:
+  1. add_scratchpad_memory_update  — insert or update a working memory entry
+     (the LLM-facing name is historical; this writes to working_memory, not
+     the scratchpad — the scratchpad just tracks the audit trail)
+  2. get_working_memory / get_all_working_memory_current_session — read back
+
+Internal functions (insert_working_memory, update_working_memory) are called
+by other modules too (session_lifecycle, reflection consolidation) and are
+NOT directly exposed to the LLM via the tool registry.
+"""
+
 import json
 import Database.working_memory_db_client as working_memory_db_client
 import Runtime.process_manager as process_manager

@@ -1,3 +1,21 @@
+"""
+Tools/scratchpad_tool.py
+
+LLM-facing bridge to the in-memory scratchpad (MemoryManagement/shortterm_memory/scratchpad.py).
+The LLM never touches the Scratchpad class directly — it calls these functions
+through tool_calls.
+
+This module provides the full set of scratchpad operations:
+  - State updates (planning, execution, reflection sections)
+  - Tool output recording
+  - Retrieved context management
+  - Memory update tracking
+  - Compiled memory retrieval (for prompt injection)
+
+All tool calls log their output to the scratchpad's tool_outputs section
+so the LLM can see the result of its own actions on the next turn.
+"""
+
 import re
 
 import MemoryManagement.shortterm_memory.scratchpad as scratchpad

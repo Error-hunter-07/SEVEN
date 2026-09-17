@@ -1,3 +1,23 @@
+"""
+Database/chroma_db.py
+
+Initializes and owns the two ChromaDB collections used by the app:
+  - semantic_memory: atomized user facts (importance, category, polarity)
+  - episodic_memory: session summaries (title, summary, key topics)
+
+Both collections use sentence-transformers/all-MiniLM-L6-v2 embeddings
+with cosine distance, persisted to data/chroma/.
+
+Startup is gated by a threading.Event (_chroma_ready) so the first query
+blocks until init completes. Init runs on a daemon thread to avoid blocking
+the main thread during the ~10s model load on first run.
+
+First-run handling: if the embedding model is not yet cached locally,
+the offline load will fail. _make_chroma_client() catches this, temporarily
+lifts HF_HUB_OFFLINE, downloads the model, then re-enables offline mode
+so all subsequent startups are instant.
+"""
+
 import os
 import logging
 
