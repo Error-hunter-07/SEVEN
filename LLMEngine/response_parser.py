@@ -1,3 +1,28 @@
+"""
+LLMEngine/response_parser.py
+
+Two distinct transformations for LLM output, split into separate functions
+to prevent a class of bugs where terminal formatting leaked into stored data:
+
+  strip_tool_call_tags() — canonical, storage-safe text. Tool-call wrapper
+    tags removed, otherwise byte-for-byte what the model said. Use this for
+    anything that gets persisted: conversation history, chunk summaries,
+    extraction_worker queued turns, full_conversation crash backups.
+
+  format_for_display() — ANSI terminal formatting for printing to the console
+    only. Markdown bold/italic/headers/code blocks converted to ANSI escape
+    sequences. NEVER pass the output of this function to a storage layer or
+    another LLM call.
+
+FIX (root cause of degraded chunk-summary / knowledge-graph quality):
+  strip_tool_call_tags used to BE format_for_display — ANSI codes were baked
+  into stored text, causing downstream models to read control characters and
+  produce incoherent summaries that propagated into the knowledge graph.
+
+Backwards-compat alias: parse_response() now points to strip_tool_call_tags()
+so any code importing the old name gets storage-safe behaviour, not ANSI.
+"""
+
 import re
 
 # Mirrors ToolCalling/parser.py's tolerant tag matcher — see that file for

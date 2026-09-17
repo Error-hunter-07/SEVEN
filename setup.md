@@ -2,8 +2,9 @@
 
 ## Requirements
 
-- Python 3.11+ (developed on 3.14)
+- Python 3.13+ (developed on 3.13.5)
 - llama.cpp `llama-server` binary — download from https://github.com/ggerganov/llama.cpp/releases
+- A GGUF model file (main chat model + optional smaller background model)
 
 ---
 
@@ -49,21 +50,39 @@ cp .env.example .env
 Required fields:
 
 ```env
-LLM_MODEL=your-model-name           # model name passed to llama-server
+# Main chat model (GPU-accelored)
+LLM_MODEL=your-model-name
 LLM_MODEL_PATH=C:/path/to/model.gguf
 LLM_CLI_PATH=C:/path/to/llama-server.exe
-MMPROJ_PATH=C:/path/to/mmproj.gguf  # set but unused unless multimodal
+MMPROJ_PATH=                         # set but unused unless multimodal
 
+# ChromaDB persistence
 DEFAULT_PERSIST_DIR=./data/chroma
 DEFAULT_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
-DB_USER=ignored      # legacy field, SQLite is used — any value works
+# SQLite (embedded — these fields exist for compatibility, any value works)
+DB_USER=ignored
 DB_PASSWORD=ignored
 DB_NAME=ignored
 
-# BACKGROUND_LLM_MODEL_PATH=C:/path/to/small-model.gguf
-# BACKGROUND_LLM_CLI_PATH=C:/path/to/llama-server.exe  # if different binary
+# Background mini-LLM (optional — for semantic extraction + summarization)
+# A smaller CPU-only model that runs alongside the main GPU model.
+# If not set, background work falls back to the main model.
+BACKGROUND_LLM_MODEL_PATH=C:/path/to/small-model.gguf
+BACKGROUND_LLM_MODEL=your-background-model-name
+# BACKGROUND_LLM_CLI_PATH=C:/path/to/llama-server.exe  # only if different binary
 ```
+
+### Background model (optional)
+
+The background model is a smaller, CPU-only LLM that handles:
+- Semantic memory extraction (every turn)
+- Episodic/chunk summarization (every 5 turns)
+- Reflection generation (every 5 turns + session end)
+
+This lets background work run **concurrently** with the main chat turn instead of queuing behind it. If not configured, all background work uses the main GPU model (slower, blocks chat turns).
+
+Recommended: a 1-3B parameter GGUF quantized model with `gpu_layers=0` (CPU-only).
 
 ---
 
@@ -72,6 +91,29 @@ DB_NAME=ignored
 ```bash
 python -m LLMEngine.cli
 ```
+
+### CLI commands
+
+| Command | Description |
+|---------|-------------|
+| `/stop` | Flush pending work, write episodic memory, exit |
+| `/sleep` | Run KG sleep pipeline (up to 20 sessions) |
+| `/sleep N` | Run KG sleep pipeline for up to N sessions |
+| `/sleep status` | Show how many sessions are pending in the queue |
+
+---
+
+## 5. First run behavior
+
+On the first startup:
+1. The embedding model downloads from HuggingFace (~90MB) and caches locally
+2. The SQLite database initializes at `data/seven_local.db`
+3. ChromaDB initializes at `data/chroma/`
+4. The main LLM server starts and blocks until ready
+5. The background LLM server starts on a daemon thread (if configured)
+6. Background workers (extraction, chunk summary, reflection) start
+
+All subsequent startups skip the embedding download and load from cache.
 
 ---
 

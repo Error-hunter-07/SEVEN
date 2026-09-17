@@ -1,8 +1,28 @@
+"""
+ToolCalling/register.py
+
+Central registry of all tools the LLM can call. The ToolRegistry maps
+tool names to Tool objects (name, description, parameters, callable).
+
+Tools are registered once at module load time. The LLM sees them as
+OpenAI-compatible function schemas via LLMEngine/tool_schema.py, and
+ToolCalling/executor.py dispatches incoming tool calls to the matching
+registered function.
+
+Current registered tools:
+  - Scratchpad: update/get state, summaries, goals, subtasks
+  - Working memory: insert/update/get entries
+  - Semantic memory: store/search long-term facts
+  - Episodic memory: search/browse past sessions
+  - Knowledge Graph: query entity relationships
+"""
+
 from Tools.tool import Tool
 import Tools.scratchpad_tool as scratchpad_tool
 import Tools.working_memory_tool as working_memory_tool
 import Tools.semantic_memory_tool as semantic_memory_tool
 import Tools.episodic_memory_tool as episodic_memory_tool
+import Tools.kg_query_tool as kg_query_tool
 
 class ToolRegistry:
 
@@ -202,6 +222,29 @@ registry.register(
             "within_days": "int - Optional, only consider episodes from the last N days. Works with any mode.",
         },
         func=episodic_memory_tool.browse_episodic_memory
+    )
+)
+
+# KnowledgeGraph Tools 
+
+registry.register(
+    Tool(
+        name="query_knowledge_graph",
+        description=(
+            "Look up ENTITIES and their RELATIONSHIPS in the Knowledge Graph — "
+            "e.g. \"who is Mira\", \"what does Seven know about the lighthouse\", "
+            "\"how are X and Y connected\". Returns the matched entity/entities "
+            "plus their existing edges to other entities. "
+            "Do NOT use this for a single standing fact about the user — use "
+            "search_semantic_memory for that. Do NOT use this to recall what "
+            "happened in a past conversation — use search_episodic_memory for "
+            "that. Use this specifically when the question is about an entity's "
+            "identity or how entities relate to each other."
+        ),
+        parameters={
+            "query": "str - The entity or relationship question to search the graph for."
+        },
+        func=kg_query_tool.query_knowledge_graph_tool
     )
 )
 

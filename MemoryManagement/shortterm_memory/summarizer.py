@@ -1,3 +1,19 @@
+"""
+MemoryManagement/shortterm_memory/summarizer.py
+
+Compiles the scratchpad's structured state into a formatted text block
+for injection into the system prompt. Pure string formatting — no LLM
+calls, no I/O. Called by scratchpad.get_compiled_memory() on every turn.
+
+The output is a human-readable block the LLM can parse at a glance:
+  SEVEN NOTES → reasoning and observations
+  CONVERSATION SUMMARY → running narrative
+  CURRENT GOAL → what was asked
+  SUBTASKS / COMPLETED → progress tracking
+  ACTIVE TOOL / TOOL OUTPUTS → what just happened
+  MEMORY UPDATES → what was written to long-term memory
+  RETRY COUNT / LAST ERROR → robustness state
+"""
 
 import GlobalHelpers.token_counter as token_counter
 import requests

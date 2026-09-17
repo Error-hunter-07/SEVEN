@@ -1,3 +1,20 @@
+"""
+ToolCalling/executor.py
+
+Executes tool calls emitted by the LLM. Handles two sources of tool calls:
+  1. Tag-based (<tool_call>...</tool_call>) — parsed from the raw
+     LLM text output by parser.py. Used as fallback when the model doesn't
+     support native OpenAI-style tool calling.
+  2. Native API-style (OpenAI function calling format) — returned as a
+     structured list in the response. These take priority.
+
+For native calls, returns {tool_call_id: result_string} so the caller can
+feed real tool output back to the model. For tag-based calls, results are
+logged but not returned (the model doesn't expect them back).
+
+All tool results are truncated to 2000 chars to prevent prompt overflow.
+"""
+
 import json
 from .parser import parse_tool_calls
 from .register import registry

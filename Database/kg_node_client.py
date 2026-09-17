@@ -72,6 +72,23 @@ def _extract_keywords(name: str, heading: str) -> list[str]:
         if len(t) > 1 and t not in _STOPWORDS
     })
 
+# def _extract_keywords_from_query(query: str) -> list[str]:
+#     """
+#     Extract meaningful individual words from a query
+
+#     Lowercases everything, strips punctuation, removes stopwords and
+#     single-character tokens. Returns a deduplicated list.
+
+#     This is used by _search_exact_name in kg_query_service.py
+#     """
+#     import re
+#     raw = f"{query}".lower()
+#     tokens = re.findall(r"[a-z0-9]+", raw)
+#     return list({
+#         t for t in tokens
+#         if len(t) > 1 and t not in _STOPWORDS
+#     })
+
 
 # ---------------------------------------------------------------------------
 # Node CRUD

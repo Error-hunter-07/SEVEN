@@ -1,3 +1,21 @@
+"""
+Runtime/process_manager.py
+
+Persistent llama.cpp subprocess manager. Handles start/stop/restart of
+the llama-server process for any role (main or background).
+
+Key design decisions:
+  - Per-role singleton registry: at most one ProcessManager per role,
+    preventing accidental double-instantiation.
+  - Session identity belongs only to the main role. Background roles
+    are LLM subprocesses with no session of their own.
+  - Process is detached from Ctrl+C signal group so the server survives
+    terminal interrupts and we control shutdown explicitly.
+  - --jinja flag enables chat_template_kwargs (e.g. enable_thinking=False)
+    which was silently no-ops before, causing background calls to burn
+    max_tokens on hidden reasoning.
+"""
+
 import subprocess
 import sys
 import time

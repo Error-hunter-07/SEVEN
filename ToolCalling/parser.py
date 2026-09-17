@@ -1,3 +1,17 @@
+"""
+ToolCalling/parser.py
+
+Parses tool-call JSON from the LLM's text output using regex tag matching.
+The canonical format is <tool_call>{"tool": ..., "arguments": {...}}</tool_call>,
+but some local models (depending on chat template / fine-tune) emit near-miss
+variants using pipe-delimited special tokens (<|tool_call|>).
+
+The wrapper tag is recognized and stripped either way; the JSON payload inside
+must parse cleanly for the call to actually execute. Malformed payloads are
+logged and dropped — no best-effort salvage, since calling the wrong tool
+with the wrong arguments is worse than a silent no-op.
+"""
+
 import json
 import re
 
