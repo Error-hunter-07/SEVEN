@@ -4,7 +4,7 @@ SEVEN's tool system lets the LLM interact with its memory layers, scratchpad, an
 
 The system supports two tool-call formats simultaneously: native OpenAI-style function calling (preferred) and tag-based `<tool_call>` parsing (fallback for local models that don't support native tool calling).
 
-[Tool call flow diagram placeholder]
+![ToolCallFlowDiagram](Docs/ToolCallFlowDiagram.png)
 
 ---
 
@@ -35,8 +35,6 @@ class Tool:
 ```
 
 At startup, `llm_client.py` reads the registry and builds OpenAI-compatible function schemas via `tool_schema.build_tool_schema()`, which infers JSON Schema types from the leading word of each parameter's description string (e.g. `"bool - ..."` → `{"type": "boolean"}`).
-
-[Tool registration diagram placeholder]
 
 ---
 
@@ -210,8 +208,6 @@ Type inference is based on the leading word of the description:
 - `"bool - ..."` → `{"type": "boolean"}`
 
 All parameters are treated as optional in the schema (no `required` field) — the tool execution layer handles missing arguments gracefully.
-
-[Tool schema generation diagram placeholder]
 
 ---
 
